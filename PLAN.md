@@ -53,7 +53,17 @@ at a time.
     `Dirties` (`src/position.*`, `src/search.*`, `src/thread.*`), and the
     Makefile `net` target.
   - Result: the engine builds without downloading a net.
-- **1.4 Minimal chess search.** Rewrite `search()`/`qsearch()` in
+- **1.4 Remove NUMA, large pages and shared memory.**
+  - Delete `src/numa.h`, `src/shm.h` and `src/shm_unix.h`, the `NumaPolicy`
+    option, thread binding and per-node replication (`src/thread.*`,
+    `src/engine.*`, `src/history.h`, `src/search.*`).
+  - Replace `memory.cpp`'s large-page allocators with plain aligned
+    allocation for the TT and workers.
+  - Done after 1.3 because most of the NUMA code replicates the NNUE network.
+    About 4-5% nps (stockfish_4pc measured +4.65% for large pages), for a lot
+    less code.
+  - Bench must be unchanged (1 thread).
+- **1.5 Minimal chess search.** Rewrite `search()`/`qsearch()` in
   `src/search.cpp`.
   - **Keep:** Worker, threads, the iterative-deepening loop, time checks, root
     moves, PV, TT, check handling (only until Phase 2).
@@ -62,7 +72,7 @@ at a time.
     histories, and continuation/pawn/low-ply/capture histories.
   - **Search:** full-window ID plus PVS. The MovePicker (`src/movepick.*`)
     orders TT move, then captures by MVV-LVA, then quiets by butterfly history.
-- **1.5 32-bit `Move` with a duck field** (still chess, field unused).
+- **1.6 32-bit `Move` with a duck field** (still chess, field unused).
   - `src/types.h`: the low 16 bits keep Stockfish's layout (to, from,
     promotion, type); bits 16-21 hold the duck square.
   - Add `duck_sq()` and a chess-part accessor; histories index by the chess

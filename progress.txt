@@ -2,12 +2,12 @@ duckchess_stockfish progress
 Base: official-stockfish/Stockfish ff7cee42 (2026-10-28), Bench 1556650, tag sf-base
 Repo: github.com/Anurag-Baundwal/duckchess_stockfish (public)
 Local: C:\Users\dell3\source\repos7\duckchess_stockfish
-Plan: PLAN.md   Analysis: ..\duck_engine_analysis.md
+Plan: PLAN.md   Guidelines: AGENTS.md   Analysis: ..\duck_engine_analysis.md
 
-[x] A   repo created, cloned, CI removed, plan committed (this commit)
+[x] A   repo created, cloned, CI removed, plan committed (a3f95b89)
 [ ] 1.1 rename engine          [ ] 1.2 remove Syzygy
-[ ] 1.3 HCE replaces NNUE      [ ] 1.4 minimal chess search
-[ ] 1.5 32-bit Move + TT
+[ ] 1.3 HCE replaces NNUE      [ ] 1.4 remove NUMA, large pages, shm
+[ ] 1.5 minimal chess search   [ ] 1.6 32-bit Move + TT
 [ ] 2.1-2.6 duck rules, movegen, UCI, perft
 [ ] 2.7 perft suite matches Fairy-Stockfish (n/n positions)
 [ ] 3.1-3.3 duck HCE, search, bench
@@ -17,5 +17,11 @@ Log (date, step, commit, bench, notes):
 2026-10-31  A    repo created (public, empty) and pushed from upstream ff7cee42;
                  removed .github/workflows (15 files) so Stockfish's CI never runs
                  here; added PLAN.md and progress.txt. Bench 1556650 (unchanged).
+2026-10-31  -    added AGENTS.md (developer guidelines, adapted from stockfish_4pc's
+                 developer brief, commit guidelines and AGENTS.md) and CLAUDE.md
+                 importing it; PLAN.md gains step 1.4 (remove NUMA, large pages
+                 and shared memory), later Phase 1 steps renumbered.
+                 Baseline build (MSYS2 g++, ARCH=native = x86-64-avxvnni) with
+                 nn-d1ee674a62ca.nnue copied from repos6/Stockfish: Bench 1556650.
 
 Next step: 1.1 rename the engine (src/misc.cpp engine_info, README header).
