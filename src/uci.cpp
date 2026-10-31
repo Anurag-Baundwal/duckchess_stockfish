@@ -673,7 +673,6 @@ void UCIEngine::on_update_full(const Engine::InfoFull& info, bool showWDL) {
     ss << " nodes " << info.nodes        //
        << " nps " << info.nps            //
        << " hashfull " << info.hashfull  //
-       << " tbhits " << info.tbHits      //
        << " time " << info.timeMs        //
        << " pv " << info.pv;             //
 

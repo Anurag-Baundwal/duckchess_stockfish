@@ -39,7 +39,6 @@
 #include "position.h"
 #include "search.h"
 #include "shm.h"
-#include "syzygy/tbprobe.h"
 #include "types.h"
 #include "uci.h"
 #include "ucioption.h"
@@ -121,18 +120,6 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
     options.add("UCI_ShowWDL", Option(false));
 
     options.add(  //
-      "SyzygyPath", Option("", [](const Option& o) {
-          Tablebases::init(o);
-          return std::nullopt;
-      }));
-
-    options.add("SyzygyProbeDepth", Option(1, 1, 100));
-
-    options.add("Syzygy50MoveRule", Option(true));
-
-    options.add("SyzygyProbeLimit", Option(7, 0, 7));
-
-    options.add(  //
       "EvalFile", Option(EvalFileDefaultName, [this](const Option& o) {
           load_network(path_from_utf8(std::string(o)));
           return std::nullopt;
@@ -154,7 +141,7 @@ void Engine::go(Search::LimitsType& limits) {
     assert(limits.perft == 0);
     verify_network();
 
-    threads.start_thinking(options, pos, states, limits);
+    threads.start_thinking(pos, states, limits);
 }
 void Engine::stop() { threads.stop = true; }
 
@@ -163,9 +150,6 @@ void Engine::search_clear() {
 
     tt.clear(threads);
     threads.clear();
-
-    // TODO: does not work with multiple instances
-    Tablebases::init(options["SyzygyPath"]);  // Free mapped files
 }
 
 void Engine::set_on_update_no_moves(std::function<void(const Engine::InfoShort&)>&& f) {

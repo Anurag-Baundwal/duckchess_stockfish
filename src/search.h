@@ -37,7 +37,6 @@
 #include "numa.h"
 #include "position.h"
 #include "score.h"
-#include "syzygy/tbprobe.h"
 #include "timeman.h"
 #include "types.h"
 
@@ -60,7 +59,7 @@ class Network;
 
 namespace Search {
 
-// syzygy_extend_pv() may lead to PVs longer than MAX_PLY
+// The PV of a root move, with room reserved for MAX_PLY moves
 struct RootPVMoves: public std::vector<Move> {
     RootPVMoves() { reserve(MAX_PLY); }
 };
@@ -161,8 +160,6 @@ struct RootMove {
     bool        inexactUpper     = false;  // one-sided bound here. See also `enum Bound` in types.h
     bool        previousScoreExact = false;
     int         selDepth           = 0;
-    int         tbRank             = 0;
-    Value       tbScore;
     RootPVMoves pv, previousPV;
 };
 
@@ -226,7 +223,6 @@ struct InfoFull: InfoShort {
     usize            timeMs;
     usize            nodes;
     usize            nps;
-    usize            tbHits;
     std::string_view pv;
     int              hashfull;
 };
@@ -377,7 +373,7 @@ class Worker {
     LimitsType limits;
 
     usize              pvIdx, pvLast;
-    RelaxedAtomic<u64> nodes, tbHits, bestMoveChanges;
+    RelaxedAtomic<u64> nodes, bestMoveChanges;
     int                selDepth, nmpMinPly;
 
     Value optimism[COLOR_NB];
@@ -395,8 +391,6 @@ class Worker {
 
     // The main thread has a SearchManager, the others have a nullptr
     std::unique_ptr<SearchManager> manager;
-
-    Tablebases::Config tbConfig;
 
     const OptionsMap&                                        options;
     ThreadPool&                                              threads;

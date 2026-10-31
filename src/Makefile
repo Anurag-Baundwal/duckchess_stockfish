@@ -78,7 +78,7 @@ PGOBENCH = $(RUN_PREFIX) ./$(EXE) bench
 ### Source and object files
 SRCS = attacks.cpp benchmark.cpp bitboard.cpp evaluate.cpp main.cpp \
 	misc.cpp movegen.cpp movepick.cpp position.cpp \
-	search.cpp thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp syzygy/tbprobe.cpp \
+	search.cpp thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp \
 	nnue/nnue_accumulator.cpp nnue/nnue_misc.cpp nnue/network.cpp \
 	nnue/features/k32h3.cpp nnue/features/full_threats.cpp nnue/features/pp_3wide.cpp \
 	engine.cpp score.cpp memory.cpp
@@ -90,12 +90,12 @@ HEADERS = attacks.h benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.
 		nnue/features/pp_3wide.h nnue/layers/affine_transform.h nnue/layers/affine_transform_sparse_input.h \
 		nnue/layers/clipped_relu.h nnue/layers/sqr_clipped_relu.h nnue/nnue_accumulator.h \
 		nnue/nnue_architecture.h nnue/nnue_common.h nnue/nnue_feature_transformer.h nnue/simd.h \
-		nnue/nnz_helper.h position.h search.h syzygy/tbprobe.h thread.h thread_native.h timeman.h \
+		nnue/nnz_helper.h position.h search.h thread.h thread_native.h timeman.h \
 		tt.h tune.h types.h uci.h ucioption.h perft.h nnue/network.h engine.h score.h numa.h memory.h shm.h shm_unix.h
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
-VPATH = syzygy:nnue:nnue/features
+VPATH = nnue:nnue/features
 
 ### ==========================================================================
 ### Section 2. High-level Configuration
@@ -133,7 +133,6 @@ VPATH = syzygy:nnue:nnue/features
 # lsx = yes/no        --- -mlsx              --- Use Loongson SIMD eXtension
 # lasx = yes/no       --- -mlasx             --- Use Loongson Advanced SIMD eXtension
 # relaxedsimd = y/n   --- -mrelaxed-simd     --- Use WebAssembly relaxed SIMD extension
-# syzygy = yes/no     --- -DNO_TABLEBASES    --- Support Syzygy tablebase probing
 #
 # Note that Makefile is space sensitive, so when adding new architectures
 # or modifying existing flags, you have to make sure there are no extra spaces
@@ -199,7 +198,6 @@ rva23 = no
 lsx = no
 lasx = no
 relaxedsimd = no
-syzygy = yes
 STRIP = strip
 
 ifneq ($(shell which clang-format-20 2> /dev/null),)
@@ -411,7 +409,6 @@ ifeq ($(ARCH),wasm32)
 	sse2 = yes
 	ssse3 = yes
 	sse41 = yes
-	syzygy = no
 endif
 
 ifeq ($(ARCH),wasm32-relaxed-simd)
@@ -421,7 +418,6 @@ ifeq ($(ARCH),wasm32-relaxed-simd)
 	ssse3 = yes
 	sse41 = yes
 	relaxedsimd = yes
-	syzygy = no
 endif
 
 ifeq ($(ARCH),ppc-32)
@@ -909,11 +905,6 @@ ifeq ($(pext),yes)
 	endif
 endif
 
-### Syzygy tablebases
-ifeq ($(syzygy),no)
-	CXXFLAGS += -DNO_TABLEBASES
-endif
-
 ### 3.8.1 Try to include git info for versioning and avoid recompiles if nothing changes
 BUILD_SHA_FILE       := .build_sha.txt
 BUILD_DATE_FILE      := .build_date.txt
@@ -1223,12 +1214,12 @@ clean: objclean profileclean universalclean
 
 # clean binaries and objects
 objclean:
-	@rm -f stockfish stockfish.exe *.o ./syzygy/*.o ./nnue/*.o ./nnue/features/*.o $(BUILD_SHA_FILE) $(BUILD_DATE_FILE) $(BUILD_DIFFINDEX_FILE)
+	@rm -f stockfish stockfish.exe *.o ./nnue/*.o ./nnue/features/*.o $(BUILD_SHA_FILE) $(BUILD_DATE_FILE) $(BUILD_DIFFINDEX_FILE)
 
 # clean auxiliary profiling files
 profileclean:
 	@rm -rf profdir
-	@rm -f bench.txt *.gcda *.gcno ./syzygy/*.gcda ./nnue/*.gcda ./nnue/features/*.gcda *.s PGOBENCH.out
+	@rm -f bench.txt *.gcda *.gcno ./nnue/*.gcda ./nnue/features/*.gcda *.s PGOBENCH.out
 	@rm -f stockfish.profdata *.profraw
 	@rm -f stockfish.*args*
 	@rm -f stockfish.*lt*
@@ -1285,7 +1276,6 @@ config-sanity: net
 	echo "arm_version: '$(arm_version)'" && \
 	echo "lsx: '$(lsx)'" && \
 	echo "lasx: '$(lasx)'" && \
-	echo "syzygy: '$(syzygy)'" && \
 	echo "target_windows: '$(target_windows)'" && \
 	echo "" && \
 	echo "Flags:" && \
@@ -1321,7 +1311,6 @@ config-sanity: net
 	(test "$(neon)" = "yes" || test "$(neon)" = "no") && \
 	(test "$(lsx)" = "yes" || test "$(lsx)" = "no") && \
 	(test "$(lasx)" = "yes" || test "$(lasx)" = "no") && \
-	(test "$(syzygy)" = "yes" || test "$(syzygy)" = "no") && \
 	(test "$(comp)" = "gcc" || test "$(comp)" = "icx" || test "$(comp)" = "mingw" || \
 	 test "$(comp)" = "clang" || test "$(comp)" = "armv7a-linux-androideabi16-clang" || \
 	 test "$(comp)" = "aarch64-linux-android21-clang")

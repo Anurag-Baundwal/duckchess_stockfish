@@ -5,7 +5,7 @@ Local: C:\Users\dell3\source\repos7\duckchess_stockfish
 Plan: PLAN.md   Guidelines: AGENTS.md   Analysis: ..\duck_engine_analysis.md
 
 [x] A   repo created, cloned, CI removed, plan committed (a3f95b89)
-[x] 1.1 rename engine          [ ] 1.2 remove Syzygy
+[x] 1.1 rename engine          [x] 1.2 remove Syzygy
 [ ] 1.3 HCE replaces NNUE      [ ] 1.4 remove NUMA, large pages, shm
 [ ] 1.5 minimal chess search   [ ] 1.6 32-bit Move + TT
 [ ] 2.1-2.6 duck rules, movegen, UCI, perft
@@ -26,6 +26,15 @@ Log (date, step, commit, bench, notes):
 2026-10-31  1.1  engine_version_info() names the engine duckchess_stockfish
                  ("id name duckchess_stockfish dev-YYYYMMDD-SHA"); README gets a
                  short header. Bench 1556650 (unchanged).
+2026-10-31  1.2  Syzygy removed: src/syzygy/, the four Syzygy* options, the Step 7
+                 probe, root ranking (tbRank/tbScore), syzygy_extend_pv, tbhits in
+                 info lines, WDL/DTZ in `d`, Makefile syzygy= option. Kept the
+                 VALUE_TB score band and its UCI formatting (part of the value
+                 scheme). Bench 1556650 (unchanged); chess perft (tests/perft.sh
+                 run_test lines, via a Python driver since expect is missing)
+                 20/20 OK; MultiPV 3 OK.
+                 clang-format 21.1.8 (/c/msys64/clang64/bin) reproduces upstream's
+                 formatting exactly, so use it on edited files.
 
-Next step: 1.2 remove Syzygy (src/syzygy/, Syzygy* options in engine.cpp,
-TB code in search.cpp, Makefile SRCS/VPATH). Bench must stay 1556650.
+Next step: 1.3 replace NNUE with SF11 material + PSQT (sf_11:src/psqt.cpp,
+sf_11:src/types.h), delete src/nnue, EvalFile, accumulators/Dirties, net target.

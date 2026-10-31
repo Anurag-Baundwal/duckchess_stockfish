@@ -37,7 +37,6 @@
 #include "numa.h"
 #include "position.h"
 #include "search.h"
-#include "syzygy/tbprobe.h"  // for Stockfish::Depth
 #include "thread.h"
 #include "tt.h"
 #include "types.h"
