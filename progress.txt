@@ -41,8 +41,8 @@ Format:  /c/msys64/clang64/bin/clang-format -i --style=file:.clang-format FILE
 Git:     from Git Bash only (MSYS2's git ignores core.autocrlf).
 NNUE net (needed until 1.3 is done): src/nn-d1ee674a62ca.nnue, copied from
   repos6/Stockfish/src (SHA-256 starts d1ee674a62ca, 136 MB, gitignored).
-Chess perft: tests/perft.sh needs `expect`, which is not installed. Its
-  run_test lines were run with a Python driver instead (see journal, 1.2).
+Chess perft (Phase 1): python tests/chess_perft.py <absolute path to
+  src\stockfish.exe>. tests/perft.sh itself needs `expect`, not installed.
 
 
 Journal
@@ -120,7 +120,7 @@ Journal
 
 2026-10-31  -  Document clang-format in AGENTS.md                 bbd71679
 
-2026-10-31  1.3a Remove universal binary builds                (this commit)
+2026-10-31  1.3a Remove universal binary builds                    6234bb11
   - Universal builds (ARCH=x86-64-universal, arm64-universal,
     riscv64-universal, and macos-lipo) produce one binary with every x86/ARM
     variant and the NNUE net embedded, picking the best at runtime. OpenBench
@@ -136,16 +136,20 @@ Journal
   - src/nnue/network.cpp still has dead UNIVERSAL_BINARY #ifdefs; the whole
     file goes in the next commit.
   - Verified: clean rebuild without warnings; Bench 1556650 (unchanged);
-    `make help` lists no universal targets.
+    `make help` lists no universal targets; chess perft 20/20 OK.
+
+2026-10-31  -  Chess perft driver                              (this commit)
+  - tests/chess_perft.py runs the run_test lines of tests/perft.sh and
+    checks each "Nodes searched", because perft.sh needs `expect`.
+    Usage: python tests/chess_perft.py C:\...\src\stockfish.exe
+    (absolute engine path on Windows). 20/20 OK, about 90 s.
+  - It serves Phase 1 (still chess). Phase 2 replaces chess perft with the
+    duck perft suite checked against Fairy-Stockfish.
 
 
 Next steps
 ----------
-1. Add the Python chess-perft driver to tests/ (tests/chess_perft.py, reads
-   the run_test lines of tests/perft.sh), so Phase 1 checks survive the end
-   of a session. No functional change.
-
-2. 1.3b  Replace NNUE with Stockfish 11's material + PSQT. Design, after
+1. 1.3b  Replace NNUE with Stockfish 11's material + PSQT. Design, after
    reading the code:
    - types.h: add SF11's Score type (make_score, mg_value, eg_value) and the
      MG/EG piece values (Pawn 128/213, Knight 781/854, Bishop 825/915,
@@ -178,6 +182,6 @@ Next steps
    - Expected: bench changes (new eval); chess perft unchanged; the engine
      builds without any net.
 
-3. 1.4  Remove NUMA, large pages, shared memory (bench unchanged).
-4. 1.5  Minimal chess search.  5. 1.6  32-bit Move + 2-entry TT clusters.
-6. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish.
+2. 1.4  Remove NUMA, large pages, shared memory (bench unchanged).
+3. 1.5  Minimal chess search.  4. 1.6  32-bit Move + 2-entry TT clusters.
+5. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish.
