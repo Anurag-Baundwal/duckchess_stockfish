@@ -127,20 +127,20 @@ class Logger {
 }  // namespace
 
 
-// Returns the full name of the current Stockfish version.
+// Returns the full name of the current duckchess_stockfish version.
 //
 // For local dev compiles we try to append the commit SHA and
 // commit date from git. If that fails only the local compilation
 // date is set and "nogit" is specified:
-//      Stockfish dev-YYYYMMDD-SHA
+//      duckchess_stockfish dev-YYYYMMDD-SHA
 //      or
-//      Stockfish dev-YYYYMMDD-nogit
+//      duckchess_stockfish dev-YYYYMMDD-nogit
 //
 // For releases (non-dev builds) we only include the version number:
-//      Stockfish version
+//      duckchess_stockfish version
 std::string engine_version_info() {
     std::stringstream ss;
-    ss << "Stockfish " << version << std::setfill('0');
+    ss << "duckchess_stockfish " << version << std::setfill('0');
 
     if constexpr (version == "dev")
     {

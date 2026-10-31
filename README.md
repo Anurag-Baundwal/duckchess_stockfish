@@ -1,3 +1,9 @@
+# duckchess_stockfish
+
+A duck chess engine built on Stockfish. It is in early development: see
+[PLAN.md](PLAN.md) for the steps and [progress.txt](progress.txt) for where
+they stand. Everything below is Stockfish's own README.
+
 <div align="center">
 
   [![Stockfish][stockfish128-logo]][website-link]
