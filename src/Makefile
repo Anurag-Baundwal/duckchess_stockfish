@@ -83,8 +83,6 @@ SRCS = attacks.cpp benchmark.cpp bitboard.cpp evaluate.cpp main.cpp \
 	nnue/features/k32h3.cpp nnue/features/full_threats.cpp nnue/features/pp_3wide.cpp \
 	engine.cpp score.cpp memory.cpp
 
-OTHER_SRCS = universal/entry_x86.cpp universal/entry_arm64.cpp universal/entry_riscv64.cpp universal/nnue_embed.cpp
-
 HEADERS = attacks.h benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.h \
 		nnue/nnue_misc.h nnue/features/k32h3.h nnue/features/full_threats.h \
 		nnue/features/pp_3wide.h nnue/layers/affine_transform.h nnue/layers/affine_transform_sparse_input.h \
@@ -155,20 +153,14 @@ endif
 # explicitly check for the list of supported architectures (as listed with make help),
 # the user can override with `make ARCH=x86-64-avx512icl SUPPORTED_ARCH=true`
 ifeq ($(ARCH), $(filter $(ARCH), \
-                 x86-64-universal x86-64-avx512icl x86-64-vnni512 x86-64-avx512 x86-64-avxvnni \
+                 x86-64-avx512icl x86-64-vnni512 x86-64-avx512 x86-64-avxvnni \
                  x86-64-bmi2 x86-64-avx2 x86-64-sse41-popcnt x86-64-modern x86-64-ssse3 x86-64-sse3-popcnt \
                  x86-64 x86-32-sse41-popcnt x86-32-sse2 x86-32 ppc-64 ppc-64-altivec ppc-64-vsx ppc-32 e2k \
-                 armv7 armv7-neon armv8 armv8-dotprod arm64-universal apple-silicon general-64 general-32 riscv64 \
-                 riscv64-rva23 riscv64-universal loongarch64 loongarch64-lsx loongarch64-lasx wasm32 wasm32-relaxed-simd))
+                 armv7 armv7-neon armv8 armv8-dotprod apple-silicon general-64 general-32 riscv64 \
+                 riscv64-rva23 loongarch64 loongarch64-lsx loongarch64-lasx wasm32 wasm32-relaxed-simd))
    SUPPORTED_ARCH=true
 else
    SUPPORTED_ARCH=false
-endif
-
-ifneq (,$(filter $(ARCH),x86-64-universal arm64-universal riscv64-universal))
-   UNIVERSAL_BUILD=true
-else
-   UNIVERSAL_BUILD=false
 endif
 
 
@@ -381,14 +373,6 @@ ifeq ($(ARCH),armv8-dotprod)
 	popcnt = yes
 	neon = yes
 	dotprod = yes
-	arm_version = 8
-endif
-
-ifeq ($(ARCH),arm64-universal)
-	arch = armv8
-	prefetch = yes
-	popcnt = yes
-	neon = yes
 	arm_version = 8
 endif
 
@@ -969,10 +953,7 @@ ifeq ($(debug),no)
 		ifeq ($(gccisclang),)
 			# lto-partition=balanced is much faster on multi-core systems and
 			# has not been observed to reduce performance for gcc > 13.
-			# It is however not compatible with universal builds.
-			ifeq ($(UNIVERSAL_SLICE),true)
-				CXXFLAGS += -flto -flto-partition=one
-			else ifeq ($(shell test "$(gccmajorv)" -le 13 2>/dev/null && echo true),true)
+			ifeq ($(shell test "$(gccmajorv)" -le 13 2>/dev/null && echo true),true)
 				CXXFLAGS += -flto -flto-partition=one
 			else
 				CXXFLAGS += -flto -flto-partition=balanced
@@ -1021,8 +1002,7 @@ help:
 	echo "help                    > Display architecture details" && \
 	echo "profile-build           > standard build with profile-guided optimization" && \
 	echo "build                   > skip profile-guided optimization" && \
-	echo "macos-lipo              > macOS x86-64 + Apple silicon universal binary" && \
-	echo "net                     > Download the default nnue nets" && \
+	echo "net                   > Download the default nnue nets" && \
 	echo "strip                   > Strip executable" && \
 	echo "install                 > Install executable" && \
 	echo "clean                   > Clean up" && \
@@ -1030,7 +1010,6 @@ help:
 	echo "Supported archs:" && \
 	echo "" && \
 	echo "native                  > select the best architecture for the host processor (default)" && \
-	echo "x86-64-universal        > x86 64-bit with automatic runtime selection of the best architecture" && \
 	echo "x86-64-avx512icl        > x86 64-bit with minimum avx512 support of Intel Ice Lake or AMD Zen 4" && \
 	echo "x86-64-vnni512          > x86 64-bit with vnni 512bit support" && \
 	echo "x86-64-avx512           > x86 64-bit with avx512 support" && \
@@ -1051,7 +1030,6 @@ help:
 	echo "ppc-32                  > PPC 32-bit" && \
 	echo "armv7                   > ARMv7 32-bit" && \
 	echo "armv7-neon              > ARMv7 32-bit with popcnt and neon" && \
-	echo "arm64-universal         > ARMv8 64-bit with automatic runtime selection of the best architecture" && \
 	echo "armv8                   > ARMv8 64-bit with popcnt and neon" && \
 	echo "armv8-dotprod           > ARMv8 64-bit with popcnt, neon and dot product support" && \
 	echo "e2k                     > Elbrus 2000" && \
@@ -1060,7 +1038,6 @@ help:
 	echo "general-32              > unspecified 32-bit" && \
 	echo "riscv64                 > RISC-V 64-bit" && \
 	echo "riscv64-rva23           > RISC-V 64-bit RVA23 profile" && \
-	echo "riscv64-universal       > RISC-V 64-bit with automatic runtime selection of the best architecture" && \
 	echo "loongarch64             > LoongArch 64-bit" && \
 	echo "loongarch64-lsx         > LoongArch 64-bit with SIMD eXtension" && \
 	echo "loongarch64-lasx        > LoongArch 64-bit with Advanced SIMD eXtension" && \
@@ -1083,7 +1060,6 @@ help:
 	echo "" && \
 	echo "make -j profile-build ARCH=x86-64-avxvnni" && \
 	echo "make -j profile-build ARCH=x86-64-avxvnni COMP=gcc CXX=g++-12.0" && \
-	echo 'make -j profile-build ARCH=x86-64-universal RUN_PREFIX="/path/to/sde -future --" CXX=g++-15' && \
 	echo "make -j build ARCH=x86-64-ssse3 COMP=clang" && \
 	echo ""
 ifneq ($(SUPPORTED_ARCH), true)
@@ -1092,7 +1068,7 @@ ifneq ($(SUPPORTED_ARCH), true)
 endif
 
 
-.PHONY: help analyze build profile-build macos-lipo strip install clean net \
+.PHONY: help analyze build profile-build strip install clean net \
 	objclean profileclean config-sanity \
 	icx-profile-use icx-profile-make \
 	gcc-profile-use gcc-profile-make \
@@ -1102,7 +1078,6 @@ endif
 analyze: net config-sanity objclean
 	$(MAKE) -k ARCH=$(ARCH) COMP=$(COMP) $(OBJS)
 
-ifeq ($(UNIVERSAL_BUILD),false)
 build: net config-sanity
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
 
@@ -1121,84 +1096,6 @@ profile-build: net config-sanity objclean profileclean
 	@echo ""
 	@echo "Step 4/4. Deleting profile data ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) profileclean
-endif
-
-# Default network filename, read from evaluate.h's EvalFileDefaultName.
-macos-lipo: NNUE_NET = $(shell grep -oE 'nn-[0-9a-f]+\.nnue' evaluate.h | head -1)
-macos-lipo:
-	@echo ""
-	@echo "Step 1/4. Building x86-64 slice (network shared from Apple-silicon slice) ..."
-	CXXFLAGS="-arch x86_64" $(MAKE) build ARCH=x86-64-universal COMP=$(COMP) MACOS_X86_SLICE=1
-	mv $(EXE) $(EXE)-x86_64
-	@echo ""
-	@echo "Step 2/4. Building Apple silicon slice ..."
-	$(MAKE) profile-build ARCH=apple-silicon COMP=$(COMP)
-	mv $(EXE) $(EXE)-arm64
-	@echo ""
-	@echo "Step 3/4. Combining slices and locating the embedded network ..."
-	lipo -create $(EXE)-x86_64 $(EXE)-arm64 -output $(EXE)
-	$(SHELL) universal/patch_x86_slice.sh $(EXE) $(EXE)-x86_64 $(NNUE_NET)
-	@echo ""
-	@echo "Step 4/4. Re-combining slices with the patched x86-64 slice ..."
-	lipo -create $(EXE)-x86_64 $(EXE)-arm64 -output $(EXE)
-	@rm -f $(EXE)-x86_64 $(EXE)-arm64
-	@echo "Universal macOS binary built: $(EXE)"
-
-ifeq ($(TARGET_KERNEL),Darwin)
-# Apple uses ld64 which doesn't have --save-temps
-  LTO_OBJ_SUFFIX := .lto.o
-  SAVE_TEMPS := -Wl,-object_path_lto,stockfish.lto.o
-else ifeq ($(comp), clang)
-  LTO_OBJ_SUFFIX := .lto.o
-  ifeq ($(target_windows),yes)
-    SAVE_TEMPS := -Wl,--lto-emit-asm  # ld.lld doesn't have a save temps functionality
-    use_lto_emit_asm := yes
-  else
-    SAVE_TEMPS := -Wl,--save-temps
-  endif
-else
-  LTO_OBJ_SUFFIX := .ltrans0.ltrans.o
-  SAVE_TEMPS     := -save-temps
-endif
-
-ifeq ($(arch),armv8)
-  ASM_FLAGS := -mcpu=neoverse-v2
-endif
-
-MODNAME := $(subst -,_,$(notdir $(CURDIR)))
-
-universal-object-pgo: objclean profileclean universalclean
-	@echo ""
-	@echo "Step 1/4. Building instrumented executable ..."
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(ENV_LDFLAGS) $(NNUE_EMBED_OBJ)' $(profile_make)
-	@echo ""
-	@echo "Step 2/4. Running benchmark for pgo-build ..."
-	$(PGOBENCH) > PGOBENCH.out 2>&1
-	tail -n 4 PGOBENCH.out
-	@echo ""
-	@echo "Step 3/4. Building optimized object files ..."
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) objclean
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' $(profile_use)
-	@echo ""
-ifeq ($(use_lto_emit_asm),yes)
-	@echo "Step 4/4. Renaming ctors and extracting LTO-optimized relocatable object ..."
-	awk -v MODNAME=$(MODNAME) -f ../../universal/rewrite_asm_sections.awk *.lto.s > renamed.s
-# -mcpu=neoverse-v2 (or another CPU supporting dotprod) is required for clang
-# to not complain when assembling
-	$(CXX) -c renamed.s -o stockfish.o $(ASM_FLAGS)
-else
-	@echo "Step 4/4. Extracting LTO-optimized relocatable object ..."
-	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
-endif
-
-universal-object-nopgo: objclean universalclean
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' all
-ifeq ($(use_lto_emit_asm),yes)
-	awk -v MODNAME=$(MODNAME) -f ../../universal/rewrite_asm_sections.awk *.lto.s > renamed.s
-	$(CXX) -c renamed.s -o stockfish.o $(ASM_FLAGS)
-else
-	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
-endif
 
 strip:
 	$(STRIP) $(EXE)
@@ -1209,7 +1106,7 @@ install:
 	$(STRIP) $(BINDIR)/$(EXE)
 
 # clean all
-clean: objclean profileclean universalclean
+clean: objclean profileclean
 	@rm -f .depend *~ core
 
 # clean binaries and objects
@@ -1226,19 +1123,12 @@ profileclean:
 	@rm -f stockfish.res
 	@rm -f ./-lstdc++.res
 
-universalclean:
-# On Windows "ln -s" to a directory makes a native directory symlink that rm
-# cannot unlink; rmdir unlinks it without following it. No-op elsewhere.
-	@find "$(TEMP_DIR)" -type l -exec rmdir {} + 2>/dev/null || true
-	@rm -rf "$(TEMP_DIR)"
-	@rm -f universal/network_dump.inc
-
 # evaluation network (nnue)
 net:
 	@$(SHELL) ../scripts/net.sh
 
 format:
-	$(CLANG-FORMAT) -i $(SRCS) $(OTHER_SRCS) $(HEADERS) -style=file
+	$(CLANG-FORMAT) -i $(SRCS) $(HEADERS) -style=file
 
 ### ==========================================================================
 ### Section 5. Private Targets
@@ -1315,10 +1205,8 @@ config-sanity: net
 	 test "$(comp)" = "clang" || test "$(comp)" = "armv7a-linux-androideabi16-clang" || \
 	 test "$(comp)" = "aarch64-linux-android21-clang")
 
-ifeq ($(UNIVERSAL_BUILD),false)
 $(EXE): $(OBJS)
 	+$(CXX) -o $@ $(OBJS) $(LDFLAGS)
-endif
 
 %.o: %.cpp
 	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS)) -c -o $@ $<
@@ -1371,173 +1259,5 @@ icx-profile-use:
 	-@$(CXX) $(DEPENDFLAGS) -MM $(SRCS) > $@ 2> /dev/null
 
 ifeq (, $(filter $(MAKECMDGOALS), help strip install clean net objclean profileclean format config-sanity))
-ifeq ($(UNIVERSAL_BUILD),false)
 -include .depend
 endif
-endif
-
-### ==========================================================================
-### Section 6. Universal binary driver
-### ==========================================================================
-#
-# Usage:
-#   make -j ARCH=x86-64-universal build          # non-PGO
-#   make -j ARCH=x86-64-universal profile-build  # PGO (use RUN_PREFIX for intel SDE)
-#   make -j ARCH=arm64-universal build
-
-TEMP_DIR             := temp_builds
-UNIVERSAL_EXE        := $(EXE)
-
-ifeq ($(UNIVERSAL_BUILD),true)
-
-UNIVERSAL_SRC_DIR    := universal
-NNUE_EMBED_OBJ       := $(TEMP_DIR)/nnue_embed.o
-NET_SENTINEL         := $(TEMP_DIR)/.net-done
-
-ifeq ($(arch),x86_64)
-  UNIVERSAL_ARCHES := x86-64 x86-64-sse41-popcnt x86-64-avx2 x86-64-bmi2 \
-                      x86-64-avxvnni x86-64-avx512 x86-64-vnni512 x86-64-avx512icl
-  UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_x86.o
-  UNIVERSAL_ENTRY_SRC  := $(UNIVERSAL_SRC_DIR)/entry_x86.cpp
-  BASELINE_ARCH := x86-64
-else ifeq ($(arch),riscv64)
-  UNIVERSAL_ARCHES := riscv64 riscv64-rva23
-  UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_riscv64.o
-  UNIVERSAL_ENTRY_SRC  := $(UNIVERSAL_SRC_DIR)/entry_riscv64.cpp
-  BASELINE_ARCH := riscv64
-else
-  UNIVERSAL_ARCHES := armv8 armv8-dotprod
-  UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_arm64.o
-  UNIVERSAL_ENTRY_SRC  := $(UNIVERSAL_SRC_DIR)/entry_arm64.cpp
-  BASELINE_ARCH := armv8
-endif
-
-# Top-level tracked items in src/ (directories and files)
-TRACKED_TOP := $(sort $(foreach f,$(SRCS) $(HEADERS) Makefile incbin,$(firstword $(subst /, ,$(f)))))
-
-# Baseline build must come first in the final link (Windows --allow-multiple-definition
-# uses the first copy of inline duplicates)
-ARCH_OBJS := $(TEMP_DIR)/$(BASELINE_ARCH)/stockfish.o \
-             $(patsubst %,$(TEMP_DIR)/%/stockfish.o,$(filter-out $(BASELINE_ARCH),$(UNIVERSAL_ARCHES)))
-
-UNIVERSAL_FINAL_FLAGS := -fno-exceptions -Os \
-			 -Wno-c++26-extensions -Wno-c23-extensions # suppress #embed warnings
-
-ifeq ($(TARGET_KERNEL),Darwin)
-  UNIVERSAL_FINAL_FLAGS += $(mac_target_flags)
-else ifeq ($(TARGET_KERNEL),Linux)
-  UNIVERSAL_FINAL_FLAGS += -static-libstdc++ -static-libgcc
-  ifeq ($(COMP),ndk)
-    UNIVERSAL_FINAL_FLAGS += -static
-  else
-    UNIVERSAL_FINAL_FLAGS += -lrt -lpthread
-  endif
-else    # windows
-  UNIVERSAL_FINAL_FLAGS += -Wl,--allow-multiple-definition -static
-  ifeq ($(COMP),clang)
-    UNIVERSAL_FINAL_FLAGS += -lpthread -fuse-ld=lld
-  endif
-endif
-
-# $(call arch-namespace,x86-64-avx2) => Stockfish_x86_64_avx2
-arch-suffix     = $(subst -,_,$(1))
-arch-namespace  = Stockfish_$(call arch-suffix,$(1))
-# Itanium ABI mangled name for Stockfish_<suffix>::main(int, char**)
-arch-mangled    = _ZN$(shell printf %s '$(call arch-namespace,$(1))' | wc -c | tr -d ' ')$(call arch-namespace,$(1))4mainEiPPc
-# Mach-O initializer section name: strip "x86-64" or "x86-64-" and prefix with "_i_"
-# (Mach-O section names are restricted to <=16 chars, hence this naming scheme)
-arch-mac-section = _i_$(subst -,_,$(patsubst x86-64,,$(patsubst x86-64-%,%,$(1))))
-
-ifeq ($(TARGET_KERNEL),Darwin)
-  arch-defmain = -Wl,-alias,_$(call arch-mangled,$(1)),_main
-# lld-link, used on Windows+clang, doesn't accept --defsym, so
-# we define main directly in main.cpp instead and delete it later.
-else ifeq ($(target_windows)+$(COMP),yes+clang)
-  arch-defmain = -DUNIVERSAL_NEEDS_MAIN_SHIM
-else
-  arch-defmain = -Wl,--defsym=main=$(call arch-mangled,$(1))
-endif
-
-EMBED_DIR_SUPPORTED := $(shell echo 'int main(){}' | $(CXX) -x c++ --embed-dir=. -o /dev/null -c - 2>/dev/null && echo 1 || echo 0)
-ifeq ($(EMBED_DIR_SUPPORTED),1)
-  EMBED_DIR = --embed-dir=.
-  ARCH_EMBED_DIR = --embed-dir=../..
-endif
-
-# macos-lipo sets MACOS_X86_SLICE=1 when building the x86-64 slice so that the
-# slice reads the network out of the Apple-silicon slice instead of embedding
-# its own copy (see universal/nnue_embed.cpp and universal/patch_x86_slice.sh).
-ifeq ($(MACOS_X86_SLICE),1)
-  SLICE_DEF := -DUNIVERSAL_BINARY_MACOS_X86_SLICE
-endif
-
-arch-cxxflags   = $(ARCH_EMBED_DIR) -DStockfish=$(call arch-namespace,$(1)) -DUNIVERSAL_BINARY $(SLICE_DEF) \
-                  $(call arch-defmain,$(1)) -Wno-c++26-extensions -Wno-c23-extensions
-
-UOBJ_TGT ?= universal-object-pgo
-ifeq ($(COMP),clang)
-	OBJCOPY ?= llvm-objcopy
-else
-	OBJCOPY ?= objcopy
-endif
-
-.PHONY: build profile-build universal-clean
-build:         UOBJ_TGT := universal-object-nopgo
-build:         $(UNIVERSAL_EXE)
-profile-build: UOBJ_TGT := universal-object-pgo
-profile-build: $(UNIVERSAL_EXE)
-
-$(TEMP_DIR):
-	@mkdir -p $@
-
-# Download nnue files once in src/ (reused by every sub-arch via --embed-dir).
-$(NET_SENTINEL): | $(TEMP_DIR)
-	@cd "$(CURDIR)" && $(SHELL) ../scripts/net.sh $(EMBED_DIR_SUPPORTED)
-	@touch $@
-
-$(NNUE_EMBED_OBJ): $(UNIVERSAL_SRC_DIR)/nnue_embed.cpp $(NET_SENTINEL) | $(TEMP_DIR)
-	$(CXX) -O2 -std=c++20 -Wno-c++26-extensions $(SLICE_DEF) $(mac_target_flags) $(EXTRACXXFLAGS) $(EMBED_DIR) -c $< -o $@
-
-$(UNIVERSAL_ENTRY_OBJ): $(UNIVERSAL_ENTRY_SRC) | $(TEMP_DIR)
-	$(CXX) -O2 -std=c++20 $(mac_target_flags) $(EXTRACXXFLAGS) -c $< -o $@
-
-# Symlink tracked top-level items from src/ into temp_builds/<arch>/.
-$(TEMP_DIR)/%/.setup: | $(TEMP_DIR)
-	@rm -rf $(TEMP_DIR)/$*
-	@mkdir -p $(TEMP_DIR)/$*
-	@$(foreach f,$(TRACKED_TOP),ln -s ../../$(f) $(TEMP_DIR)/$*/$(f);)
-	@touch $@
-
-# Per-arch stockfish.o
-.SECONDARY: $(patsubst %,$(TEMP_DIR)/%/.setup,$(UNIVERSAL_ARCHES))
-
-$(TEMP_DIR)/%/stockfish.o: $(TEMP_DIR)/%/.setup $(NNUE_EMBED_OBJ) $(NET_SENTINEL)
-	+ENV_CXXFLAGS='$(ENV_CXXFLAGS) $(call arch-cxxflags,$*)' \
-	    $(MAKE) -C "$(TEMP_DIR)/$*" $(UOBJ_TGT) \
-		        ARCH=$* CXX="$(CXX)" COMP=$(COMP) UNIVERSAL_SLICE=true \
-	        NNUE_EMBED_OBJ=../nnue_embed.o
-ifeq ($(TARGET_KERNEL),Darwin)
-# Rename the initializer section
-	ld -r -rename_section __DATA __mod_init_func __DATA $(call arch-mac-section,$*) $@ -o $@.tmp
-	mv $@.tmp $@
-else
-# Drop COMDAT groups; clang LTO leaves them around internalized LOCAL
-# template instantiations which causes problems at the final link
-	$(OBJCOPY) -R .group $@
-ifeq ($(use_lto_emit_asm),yes)
-# Delete per-arch main shim
-	$(OBJCOPY) -N main $@
-else
-# Rename .init_array (Linux) or .ctors (Windows) so we can manually invoke them
-	$(OBJCOPY) --rename-section .init_array=$(call arch-suffix,$*)_init $@
-	$(OBJCOPY) --rename-section .ctors=$(call arch-suffix,$*)_init $@
-# Make the array inert
-	$(OBJCOPY) --set-section-flags $(call arch-suffix,$*)_init=alloc,data $@
-endif
-endif
-
-$(UNIVERSAL_EXE): $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS)
-	$(CXX) -o $@ $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS) $(UNIVERSAL_FINAL_FLAGS) $(EXTRALDFLAGS)
-	@echo "Universal binary built: $@"
-
-endif  # UNIVERSAL_BUILD
