@@ -18,8 +18,11 @@ friction. PLAN.md has the steps; progress.txt says where they stand.
   comments wholesale.
 - Keep diffs clean: change only what the task needs. Don't reformat, reorder or
   rename unrelated code.
-- Formatting follows Stockfish's `.clang-format` (`make format` in `src/`):
-  column-aligned declarations, GPL headers, `assert`, `[[fallthrough]]`.
+- Formatting follows Stockfish's `.clang-format`: column-aligned
+  declarations, GPL headers, `assert`, `[[fallthrough]]`. Run
+  `/c/msys64/clang64/bin/clang-format -i --style=file:.clang-format <file>` on
+  every edited file (version 21.1.8 reproduces upstream's formatting exactly),
+  then check that it only touched lines near your edit.
 - Do only what the step asks. If the step is "a basic alpha-beta search", don't
   add qsearch or pruning on top.
 
