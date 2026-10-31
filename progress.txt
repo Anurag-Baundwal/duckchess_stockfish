@@ -1,0 +1,21 @@
+duckchess_stockfish progress
+Base: official-stockfish/Stockfish ff7cee42 (2026-10-28), Bench 1556650, tag sf-base
+Repo: github.com/Anurag-Baundwal/duckchess_stockfish (public)
+Local: C:\Users\dell3\source\repos7\duckchess_stockfish
+Plan: PLAN.md   Analysis: ..\duck_engine_analysis.md
+
+[x] A   repo created, cloned, CI removed, plan committed (this commit)
+[ ] 1.1 rename engine          [ ] 1.2 remove Syzygy
+[ ] 1.3 HCE replaces NNUE      [ ] 1.4 minimal chess search
+[ ] 1.5 32-bit Move + TT
+[ ] 2.1-2.6 duck rules, movegen, UCI, perft
+[ ] 2.7 perft suite matches Fairy-Stockfish (n/n positions)
+[ ] 3.1-3.3 duck HCE, search, bench
+[ ] 4   fastchess smoke test
+
+Log (date, step, commit, bench, notes):
+2026-10-31  A    repo created (public, empty) and pushed from upstream ff7cee42;
+                 removed .github/workflows (15 files) so Stockfish's CI never runs
+                 here; added PLAN.md and progress.txt. Bench 1556650 (unchanged).
+
+Next step: 1.1 rename the engine (src/misc.cpp engine_info, README header).
