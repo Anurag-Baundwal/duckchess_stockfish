@@ -1,40 +1,183 @@
-duckchess_stockfish progress
-Base: official-stockfish/Stockfish ff7cee42 (2026-10-28), Bench 1556650, tag sf-base
-Repo: github.com/Anurag-Baundwal/duckchess_stockfish (public)
-Local: C:\Users\dell3\source\repos7\duckchess_stockfish
-Plan: PLAN.md   Guidelines: AGENTS.md   Analysis: ..\duck_engine_analysis.md
+duckchess_stockfish progress journal
+====================================
 
-[x] A   repo created, cloned, CI removed, plan committed (a3f95b89)
-[x] 1.1 rename engine          [x] 1.2 remove Syzygy
-[ ] 1.3 HCE replaces NNUE      [ ] 1.4 remove NUMA, large pages, shm
-[ ] 1.5 minimal chess search   [ ] 1.6 32-bit Move + TT
-[ ] 2.1-2.6 duck rules, movegen, UCI, perft
-[ ] 2.7 perft suite matches Fairy-Stockfish (n/n positions)
-[ ] 3.1-3.3 duck HCE, search, bench
-[ ] 4   fastchess smoke test
+Base:       official-stockfish/Stockfish ff7cee42 (2026-10-28), Bench 1556650,
+            tagged sf-base
+Repo:       github.com/Anurag-Baundwal/duckchess_stockfish (public)
+Local:      C:\Users\dell3\source\repos7\duckchess_stockfish
+Plan:       PLAN.md (phases and steps)
+Guidelines: AGENTS.md (CLAUDE.md imports it)
+Analysis:   ..\duck_engine_analysis.md (fork vs scratch, every wakwak PR with
+            its SPRT Elo, OpenBench/fastchess changes)
 
-Log (date, step, commit, bench, notes):
-2026-10-31  A    repo created (public, empty) and pushed from upstream ff7cee42;
-                 removed .github/workflows (15 files) so Stockfish's CI never runs
-                 here; added PLAN.md and progress.txt. Bench 1556650 (unchanged).
-2026-10-31  -    added AGENTS.md (developer guidelines, adapted from stockfish_4pc's
-                 developer brief, commit guidelines and AGENTS.md) and CLAUDE.md
-                 importing it; PLAN.md gains step 1.4 (remove NUMA, large pages
-                 and shared memory), later Phase 1 steps renumbered.
-                 Baseline build (MSYS2 g++, ARCH=native = x86-64-avxvnni) with
-                 nn-d1ee674a62ca.nnue copied from repos6/Stockfish: Bench 1556650.
-2026-10-31  1.1  engine_version_info() names the engine duckchess_stockfish
-                 ("id name duckchess_stockfish dev-YYYYMMDD-SHA"); README gets a
-                 short header. Bench 1556650 (unchanged).
-2026-10-31  1.2  Syzygy removed: src/syzygy/, the four Syzygy* options, the Step 7
-                 probe, root ranking (tbRank/tbScore), syzygy_extend_pv, tbhits in
-                 info lines, WDL/DTZ in `d`, Makefile syzygy= option. Kept the
-                 VALUE_TB score band and its UCI formatting (part of the value
-                 scheme). Bench 1556650 (unchanged); chess perft (tests/perft.sh
-                 run_test lines, via a Python driver since expect is missing)
-                 20/20 OK; MultiPV 3 OK.
-                 clang-format 21.1.8 (/c/msys64/clang64/bin) reproduces upstream's
-                 formatting exactly, so use it on edited files.
+This file is the handoff log. Read "Status" and "Next steps" first when
+resuming; the journal below explains how we got here.
 
-Next step: 1.3 replace NNUE with SF11 material + PSQT (sf_11:src/psqt.cpp,
-sf_11:src/types.h), delete src/nnue, EvalFile, accumulators/Dirties, net target.
+
+Status
+------
+[x] A    repo created, cloned, CI removed, plan committed
+[x] 1.1  rename engine
+[x] 1.2  remove Syzygy
+[~] 1.3  HCE replaces NNUE (universal builds removed; NNUE removal next)
+[ ] 1.4  remove NUMA, large pages, shared memory
+[ ] 1.5  minimal chess search
+[ ] 1.6  32-bit Move + TT
+[ ] 2.1-2.6  duck rules, movegen, UCI, perft
+[ ] 2.7  perft suite matches Fairy-Stockfish (n/n positions)
+[ ] 3.1-3.3  duck HCE, search, bench
+[ ] 4    fastchess smoke test
+
+
+Quick reference
+---------------
+Build (PowerShell; MSYS2 g++ 15):
+  $env:Path = "C:\msys64\ucrt64\bin;C:\msys64\usr\bin;" + $env:Path
+  $env:TMP = <a writable folder>; $env:TEMP = $env:TMP
+  cd src; make clean; make -j8 build ARCH=native COMP=mingw
+  (ARCH=native resolves to x86-64-avxvnni on this laptop.)
+Bench:   src/stockfish.exe bench   -> "Nodes searched" goes in the commit.
+Format:  /c/msys64/clang64/bin/clang-format -i --style=file:.clang-format FILE
+Git:     from Git Bash only (MSYS2's git ignores core.autocrlf).
+NNUE net (needed until 1.3 is done): src/nn-d1ee674a62ca.nnue, copied from
+  repos6/Stockfish/src (SHA-256 starts d1ee674a62ca, 136 MB, gitignored).
+Chess perft: tests/perft.sh needs `expect`, which is not installed. Its
+  run_test lines were run with a Python driver instead (see journal, 1.2).
+
+
+Journal
+-------
+
+2026-10-31  Analysis and decisions (before the repo existed)
+  - Wrote ..\duck_engine_analysis.md. Main conclusions:
+    * Fork Stockfish for its infrastructure (UCI, TT, threads, time
+      management, bench, tune.h, Makefile/PGO), not for its search. Strip the
+      search to a minimal baseline and bring features back one SPRT at a time,
+      because many of Stockfish's tweaks assume ~35 moves per node (e.g.
+      `r -= moveCount * 65` and the LMP move-count limit break at ~1000).
+    * wakwak (5331 COPE, 8 weeks old) gets its strength from duck-specific
+      pruning (duck refutations, Duck or Die, neutral ducks, caps per chess
+      move and per duck square, duckless TT, duck-aware SEE) plus a large
+      NNUE. Most of it is common sense; refutations and duckless hashing are
+      the genuinely inventive parts.
+    * A turn is one combined move (chess move + duck square), as in wakwak and
+      Fairy-Stockfish. Split plies were rejected: Stockfish's stack assumes
+      ss-1 is the opponent's move.
+    * Testing: OpenBench needs a per-variant runner (port MattBench 213d671)
+      with Silverrzz/fastchess `-variant duck`. That is a later, separate plan.
+  - Reference perft: Fairy-Stockfish duck build
+    repos7/Fairy-Stockfish/src/fsf-duck.exe (needs /c/msys64/clang64/bin on
+    PATH for libc++.dll). Startpos perft 1 = 640, perft 2 = 379440.
+
+2026-10-31  A  Repository setup                                    a3f95b89
+  - GitHub refused a second fork of official-stockfish/Stockfish (the
+    account already has Anurag-Baundwal/Stockfish), so an empty public repo
+    was created in the browser and Stockfish's history pushed into it from a
+    fresh clone. Remotes: origin = our repo, upstream = official Stockfish.
+  - Tagged the base ff7cee42 as sf-base (pushed).
+  - First commit removed .github/workflows (15 files) before the first push,
+    so Stockfish's CI never ran here (Actions: 0 workflows, 0 runs). Added
+    PLAN.md and this file.
+
+2026-10-31  -  Developer guidelines                                2583b38c
+  - AGENTS.md adapted from stockfish_4pc's developer brief, commit guidelines
+    and .agents/AGENTS.md: stay close to Stockfish (surgical diffs, keep
+    comments and code placement, Stockfish formatting), leave out NUMA, large
+    pages, shared memory, Syzygy and (for now) NNUE, duck conventions, commit
+    format, MSYS2 build. CLAUDE.md imports it.
+  - Left out of the 4pc brief on purpose: "don't run builds" (we build and
+    bench every step now) and "replace NativeThread with std::thread"
+    (NativeThread already is std::thread on Windows/Linux; it only sets an
+    8 MB stack on macOS).
+  - PLAN.md gained step 1.4 (remove NUMA, large pages, shared memory), placed
+    after the NNUE removal because most NUMA code replicates the network.
+  - Baseline build of the untouched base: Bench 1556650, as upstream says.
+
+2026-10-31  1.1  Rename the engine                                 168c3ceb
+  - engine_version_info() prints "duckchess_stockfish dev-YYYYMMDD-SHA" for
+    the UCI id name and the banner; the author line still credits the
+    Stockfish developers. README got a short header above Stockfish's README.
+  - Bench 1556650 (unchanged).
+
+2026-10-31  1.2  Remove Syzygy tablebases                          974f0b00
+  - Deleted src/syzygy, the four Syzygy* options, the Step 7 probe in
+    search(), root ranking (RootMove::tbRank/tbScore and Worker::tbConfig),
+    syzygy_extend_pv() and its call in output_pv(), tbhits counting and its
+    UCI output, the WDL/DTZ lines of `d`, Position::dtz_is_dtm(), and the
+    Makefile syzygy= option. ThreadPool::start_thinking() lost its now
+    unused options parameter.
+  - The multiPV loop's pvFirst/pvLast grouping by tbRank collapsed to
+    pvLast = rootMoves.size() (identical behaviour: all tbRank were 0).
+  - Kept on purpose: the VALUE_TB score band and its UCI formatting. They
+    sit just below the mate scores and are used by the eval clamp and the TT.
+  - Checked first that Tablebases::rank_root_moves() is a no-op without
+    tables (MaxCardinality = 0), so removing it cannot change the search.
+  - Verified: Bench 1556650 (unchanged); chess perft, all 20 run_test lines
+    of tests/perft.sh, OK (about 90 s); MultiPV 3 output correct; no
+    Syzygy options or tbhits left.
+  - Found that MSYS2's clang-format 21.1.8 gives byte-identical output on
+    upstream's sources, so it is safe to run on edited files.
+
+2026-10-31  -  Document clang-format in AGENTS.md                 bbd71679
+
+2026-10-31  1.3a Remove universal binary builds                (this commit)
+  - Universal builds (ARCH=x86-64-universal, arm64-universal,
+    riscv64-universal, and macos-lipo) produce one binary with every x86/ARM
+    variant and the NNUE net embedded, picking the best at runtime. OpenBench
+    builds natively on each worker, so they add nothing here, and they cannot
+    work once the net is gone.
+  - Deleted src/universal/, scripts/check_universal*.sh, the Makefile's
+    Section 6 (universal driver), the universal-object-* and macos-lipo
+    targets, universalclean, the UNIVERSAL_BUILD switches, the universal
+    ARCH names and help lines, and main.cpp's UNIVERSAL_BINARY entry shim.
+    .gitignore lost the universal entries.
+  - Kept: the mingw `-save-temps` link flag. It predates universal builds
+    (Stockfish commit 67062637, Windows native builds).
+  - src/nnue/network.cpp still has dead UNIVERSAL_BINARY #ifdefs; the whole
+    file goes in the next commit.
+  - Verified: clean rebuild without warnings; Bench 1556650 (unchanged);
+    `make help` lists no universal targets.
+
+
+Next steps
+----------
+1. Add the Python chess-perft driver to tests/ (tests/chess_perft.py, reads
+   the run_test lines of tests/perft.sh), so Phase 1 checks survive the end
+   of a session. No functional change.
+
+2. 1.3b  Replace NNUE with Stockfish 11's material + PSQT. Design, after
+   reading the code:
+   - types.h: add SF11's Score type (make_score, mg_value, eg_value) and the
+     MG/EG piece values (Pawn 128/213, Knight 781/854, Bishop 825/915,
+     Rook 1276/1380, Queen 2538/2682). Keep master's PieceValue as it is,
+     since SEE and non-pawn material use it.
+   - New psqt.h/psqt.cpp from sf_11:src/psqt.cpp: PSQT::psq[PIECE_NB][SQ],
+     PSQT::init(), called from main().
+   - Position: a Score psq member updated in put_piece/remove_piece/
+     move_piece (SF11 kept it in Position, not StateInfo; undo restores it
+     through the reverse calls), plus psq_score().
+   - evaluate.cpp: tapered mg/eg by game phase (non-pawn material clamped to
+     EndgameLimit 3915 .. MidgameLimit 15258, phase 0..128), side-to-move
+     view, keep master's rule50 damping and the VALUE_TB clamp. Eval::trace
+     prints the HCE terms for the `eval` command.
+   - Remove the NNUE plumbing: DirtyPiece/DirtyThreat(s)/DirtyPawnPairs/
+     Dirties (types.h), update_piece_threats() and the dirty-threat helpers,
+     the Dirties parameter of do_move(), scratchDirties, the
+     dpps/dts/dp bookkeeping in do_move() and do_castling().
+     KEEP compute_threats() and threats_by(): movegen (king moves, castling)
+     and movepick (threatByLesser) use them.
+   - search: Worker::do_move() takes the moved piece from pos.moved_piece()
+     instead of dirties.dirtyPiece.pc; drop accumulatorStack, refreshTable,
+     the network reference and ensure_network_replicated(); evaluate() calls
+     Eval::evaluate(pos).
+   - engine/uci/thread: drop EvalFile, load/save/verify network, the
+     replicated network in SharedState, export_net, set_on_verify_network.
+   - Makefile: drop nnue sources/headers/VPATH, the net target and its
+     dependencies; delete scripts/net.sh and src/nnue/; .gitignore keeps
+     *.nnue.
+   - Expected: bench changes (new eval); chess perft unchanged; the engine
+     builds without any net.
+
+3. 1.4  Remove NUMA, large pages, shared memory (bench unchanged).
+4. 1.5  Minimal chess search.  5. 1.6  32-bit Move + 2-entry TT clusters.
+6. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish.

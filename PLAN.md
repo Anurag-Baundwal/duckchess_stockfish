@@ -44,14 +44,17 @@ at a time.
   - Remove them from the Makefile `SRCS`/`VPATH`.
   - Bench must be unchanged.
 - **1.3 Replace NNUE with a handcrafted eval (material + PSQT).**
+  - First, in its own commit, remove universal binary builds: `src/universal/`,
+    `scripts/check_universal*.sh`, `macos-lipo` and the Makefile's universal
+    driver. They exist to ship one multi-arch binary with the net embedded;
+    OpenBench builds natively on each worker. Bench must be unchanged.
   - Take Stockfish 11's material values (`git show sf_11:src/types.h`) and
     PSQT `Bonus`/`PBonus` tables (`git show sf_11:src/psqt.cpp`).
   - Taper midgame/endgame by non-pawn material, as SF11 did; keep a `psq`
     score in `StateInfo`, updated in `put_piece`/`remove_piece`/`move_piece`.
-  - Delete `src/nnue/` and the NNUE embedding in `src/universal/`, the
-    `EvalFile` option, network loading (`src/engine.cpp`), accumulators and
-    `Dirties` (`src/position.*`, `src/search.*`, `src/thread.*`), and the
-    Makefile `net` target.
+  - Delete `src/nnue/`, the `EvalFile` option, network loading
+    (`src/engine.cpp`), accumulators and `Dirties` (`src/position.*`,
+    `src/search.*`, `src/thread.*`), and the Makefile `net` target.
   - Result: the engine builds without downloading a net.
 - **1.4 Remove NUMA, large pages and shared memory.**
   - Delete `src/numa.h`, `src/shm.h` and `src/shm_unix.h`, the `NumaPolicy`
