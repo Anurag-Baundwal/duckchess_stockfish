@@ -27,9 +27,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <type_traits>  // IWYU pragma: keep
 
-#include "memory.h"
 #include "misc.h"
 #include "position.h"
 
@@ -95,13 +95,13 @@ template<typename T, int SizeMultiplier>
 struct DynStats {
     explicit DynStats(usize s) {
         size = s * SizeMultiplier;
-        data = make_unique_large_page<T[]>(size);
+        data = std::make_unique<T[]>(size);
     }
     // Sets all values in the range to 0
-    void clear_range(int value, usize threadIdx, usize numaTotal) {
-        usize start = u64(threadIdx) * size / numaTotal;
+    void clear_range(int value, usize threadIdx, usize numThreads) {
+        usize start = u64(threadIdx) * size / numThreads;
         assert(start < size);
-        usize end = threadIdx + 1 == numaTotal ? size : u64(threadIdx + 1) * size / numaTotal;
+        usize end = threadIdx + 1 == numThreads ? size : u64(threadIdx + 1) * size / numThreads;
 
         while (start < end)
             data[start++].fill(value);
@@ -117,8 +117,8 @@ struct DynStats {
     }
 
    private:
-    usize             size;
-    LargePagePtr<T[]> data;
+    usize                size;
+    std::unique_ptr<T[]> data;
 };
 
 // ButterflyHistory records how often quiet moves have been successful or unsuccessful
@@ -199,14 +199,12 @@ struct ContinuationHistoryBlock {
     ContinuationHistory table[2][2];
 };
 
-// Set of histories shared between groups of threads. To avoid excessive
-// cross-node data transfer, histories are shared only between threads
-// on a given NUMA node. The passed size must be a power of two to make
-// the indexing more efficient.
+// Set of histories shared between all threads. The passed size must be
+// a power of two to make the indexing more efficient.
 struct SharedHistories {
     SharedHistories(usize threadCount) :
         correctionHistory(threadCount),
-        continuationHistoryBlock(make_unique_large_page<ContinuationHistoryBlock>()),
+        continuationHistoryBlock(std::make_unique<ContinuationHistoryBlock>()),
         pawnHistory(threadCount) {
         assert((threadCount & (threadCount - 1)) == 0 && threadCount != 0);
         sizeMinus1         = correctionHistory.get_size() - 1;
@@ -247,9 +245,9 @@ struct SharedHistories {
         return correctionHistory[pos.non_pawn_key(c) & sizeMinus1];
     }
 
-    UnifiedCorrectionHistory               correctionHistory;
-    LargePagePtr<ContinuationHistoryBlock> continuationHistoryBlock;
-    PawnHistory                            pawnHistory;
+    UnifiedCorrectionHistory                  correctionHistory;
+    std::unique_ptr<ContinuationHistoryBlock> continuationHistoryBlock;
+    PawnHistory                               pawnHistory;
 
 
    private:

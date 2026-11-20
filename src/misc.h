@@ -67,6 +67,7 @@ __extension__ using i128 = signed __int128;
 std::string engine_version_info();
 std::string engine_info(bool to_uci = false);
 std::string compiler_info();
+usize       get_hardware_concurrency();
 
 // Prefetch hint enums for explicit call-site control.
 enum class PrefetchRw {

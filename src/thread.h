@@ -26,9 +26,7 @@
 #include <mutex>
 #include <vector>
 
-#include "memory.h"
 #include "misc.h"
-#include "numa.h"
 #include "position.h"
 #include "search.h"
 #include "thread_native.h"
@@ -39,32 +37,6 @@ namespace Stockfish {
 class OptionsMap;
 using Value = int;
 
-// Sometimes we don't want to actually bind the threads, but the recipient still
-// needs to think it runs on *some* NUMA node, such that it can access structures
-// that rely on NUMA node knowledge. This class encapsulates this optional process
-// such that the recipient does not need to know whether the binding happened or not.
-class OptionalThreadToNumaNodeBinder {
-   public:
-    OptionalThreadToNumaNodeBinder(NumaIndex n) :
-        numaConfig(nullptr),
-        numaId(n) {}
-
-    OptionalThreadToNumaNodeBinder(const NumaConfig& cfg, NumaIndex n) :
-        numaConfig(&cfg),
-        numaId(n) {}
-
-    NumaReplicatedAccessToken operator()() const {
-        if (numaConfig != nullptr)
-            return numaConfig->bind_current_thread_to_numa_node(numaId);
-        else
-            return NumaReplicatedAccessToken(numaId);
-    }
-
-   private:
-    const NumaConfig* numaConfig;
-    NumaIndex         numaId;
-};
-
 // Abstraction of a thread. It contains a pointer to the worker and a native thread.
 // After construction, the native thread is started with idle_loop()
 // waiting for a signal to start searching.
@@ -72,12 +44,7 @@ class OptionalThreadToNumaNodeBinder {
 // the search is finished, it goes back to idle_loop() waiting for a new signal.
 class Thread {
    public:
-    Thread(Search::SharedState&,
-           std::unique_ptr<Search::SearchManager>,
-           usize,
-           usize,
-           usize,
-           OptionalThreadToNumaNodeBinder);
+    Thread(Search::SharedState&, std::unique_ptr<Search::SearchManager>, usize, usize);
     virtual ~Thread();
 
     void idle_loop();
@@ -93,16 +60,15 @@ class Thread {
     void  wait_for_search_finished();
     usize id() const { return idx; }
 
-    LargePagePtr<Search::Worker> worker;
-    std::function<void()>        jobFunc;
+    std::unique_ptr<Search::Worker> worker;
+    std::function<void()>           jobFunc;
 
    private:
-    std::mutex                mutex;
-    std::condition_variable   cv;
-    usize                     idx, idxInNuma, totalNuma;
-    bool                      exit = false, searching = true;  // Set before starting std::thread
-    NativeThread              stdThread;
-    NumaReplicatedAccessToken numaAccessToken;
+    std::mutex              mutex;
+    std::condition_variable cv;
+    usize                   idx;
+    bool                    exit = false, searching = true;  // Set before starting std::thread
+    NativeThread            stdThread;
 };
 
 
@@ -134,9 +100,7 @@ class ThreadPool {
     void  wait_on_thread(usize threadId);
     usize num_threads() const;
     void  clear();
-    void  set(const NumaConfig& numaConfig,
-              Search::SharedState,
-              const Search::SearchManager::UpdateContext&);
+    void  set(Search::SharedState, const Search::SearchManager::UpdateContext&);
 
     Search::SearchManager* main_manager();
     Thread*                main_thread() const { return threads.front().get(); }
@@ -144,10 +108,6 @@ class ThreadPool {
     Thread*                get_best_thread() const;
     void                   start_searching();
     void                   wait_for_search_finished() const;
-
-    std::vector<usize> get_bound_thread_to_numa_node() const;
-    std::vector<usize> get_bound_thread_count_by_numa_node() const;
-    usize              numa_nodes() const;
 
     std::atomic_bool stop, increaseDepth;
 
@@ -161,7 +121,6 @@ class ThreadPool {
    private:
     StateListPtr                         setupStates;
     std::vector<std::unique_ptr<Thread>> threads;
-    std::vector<NumaIndex>               boundThreadToNumaNode;
 
     u64 accumulate(RelaxedAtomic<u64> Search::Worker::* member) const {
 

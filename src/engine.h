@@ -20,7 +20,6 @@
 #define ENGINE_H_INCLUDED
 
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,7 +30,6 @@
 
 #include "misc.h"
 #include "history.h"
-#include "numa.h"
 #include "position.h"
 #include "search.h"
 #include "thread.h"
@@ -75,7 +73,6 @@ class Engine {
 
     // modifiers
 
-    bool set_numa_config_from_option(const std::string& o);
     void resize_threads();
     void set_tt_size(usize mb);
     void set_ponderhit(bool);
@@ -96,18 +93,12 @@ class Engine {
 
     int get_hashfull(int maxAge = 0) const;
 
-    std::string                          fen() const;
-    std::optional<PositionSetError>      flip();
-    std::string                          visualize() const;
-    std::vector<std::pair<usize, usize>> get_bound_thread_count_by_numa_node() const;
-    std::string                          get_numa_config_as_string() const;
-    std::string                          numa_config_information_as_string() const;
-    std::string                          thread_allocation_information_as_string() const;
-    std::string                          thread_binding_information_as_string() const;
+    std::string                     fen() const;
+    std::optional<PositionSetError> flip();
+    std::string                     visualize() const;
+    std::string                     thread_allocation_information_as_string() const;
 
    private:
-    NumaReplicationContext numaContext;
-
     Position     pos;
     StateListPtr states;
 
@@ -116,7 +107,7 @@ class Engine {
     TranspositionTable tt;
 
     Search::SearchManager::UpdateContext updateContext;
-    std::map<NumaIndex, SharedHistories> sharedHists;
+    std::optional<SharedHistories>       sharedHists;
 };
 
 }  // namespace Stockfish

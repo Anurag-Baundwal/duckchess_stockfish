@@ -32,11 +32,9 @@
 
 #include "evaluate.h"
 #include "misc.h"
-#include "numa.h"
 #include "perft.h"
 #include "position.h"
 #include "search.h"
-#include "shm.h"
 #include "types.h"
 #include "uci.h"
 #include "ucioption.h"
@@ -45,14 +43,7 @@ namespace Stockfish {
 
 int MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
 
-// The default configuration will attempt to group L3 domains up to 32 threads.
-// This size was found to be a good balance between the Elo gain of increased
-// history sharing and the speed loss from more cross-cache accesses (see
-// PR#6526). The user can always explicitly override this behavior.
-constexpr NumaAutoPolicy DefaultNumaPolicy = BundledL3Policy{32};
-
 Engine::Engine() :
-    numaContext(NumaConfig::from_system(DefaultNumaPolicy)),
     states(new std::deque<StateInfo>(1)),
     threads() {
 
@@ -62,14 +53,6 @@ Engine::Engine() :
       "Debug Log File", Option("", [](const Option& o) {
           start_logger(path_from_utf8(std::string(o)));
           return std::nullopt;
-      }));
-
-    options.add(  //
-      "NumaPolicy", Option("auto", [this](const Option& o) {
-          if (!set_numa_config_from_option(o))
-              return "NumaPolicy: invalid value '" + std::string(o) + "', keeping previous config.";
-          return numa_config_information_as_string() + "\n"
-               + thread_allocation_information_as_string();
       }));
 
     options.add(  //
@@ -179,30 +162,9 @@ std::optional<PositionSetError> Engine::set_position(const std::string&         
 
 // modifiers
 
-bool Engine::set_numa_config_from_option(const std::string& o) {
-    if (o == "auto" || o == "system")
-        numaContext.set_numa_config(NumaConfig::from_system(DefaultNumaPolicy));
-    else if (o == "hardware")
-        // Don't respect affinity set in the system.
-        numaContext.set_numa_config(NumaConfig::from_system(DefaultNumaPolicy, false));
-    else if (o == "none")
-        numaContext.set_numa_config(NumaConfig{});
-    else
-    {
-        auto parsed = NumaConfig::from_string(o);
-        if (!parsed.has_value())
-            return false;
-        numaContext.set_numa_config(std::move(*parsed));
-    }
-
-    // Force reallocation of threads in case affinities need to change.
-    resize_threads();
-    return true;
-}
-
 void Engine::resize_threads() {
     threads.wait_for_search_finished();
-    threads.set(numaContext.get_numa_config(), {options, threads, tt, sharedHists}, updateContext);
+    threads.set({options, threads, tt, sharedHists}, updateContext);
 
     // Reallocate the hash with the new threadpool size
     set_tt_size(options["Hash"]);
@@ -240,59 +202,11 @@ std::string Engine::visualize() const {
 
 int Engine::get_hashfull(int maxAge) const { return tt.hashfull(maxAge); }
 
-std::vector<std::pair<usize, usize>> Engine::get_bound_thread_count_by_numa_node() const {
-    auto                                 counts = threads.get_bound_thread_count_by_numa_node();
-    const NumaConfig&                    cfg    = numaContext.get_numa_config();
-    std::vector<std::pair<usize, usize>> ratios;
-    NumaIndex                            n = 0;
-    for (; n < counts.size(); ++n)
-        ratios.emplace_back(counts[n], cfg.num_cpus_in_numa_node(n));
-    if (!counts.empty())
-        for (; n < cfg.num_numa_nodes(); ++n)
-            ratios.emplace_back(0, cfg.num_cpus_in_numa_node(n));
-    return ratios;
-}
-
-std::string Engine::get_numa_config_as_string() const {
-    return numaContext.get_numa_config().to_string();
-}
-
-std::string Engine::numa_config_information_as_string() const {
-    auto cfgStr = get_numa_config_as_string();
-    return "Available processors: " + cfgStr;
-}
-
-std::string Engine::thread_binding_information_as_string() const {
-    auto              boundThreadsByNode = get_bound_thread_count_by_numa_node();
-    std::stringstream ss;
-    if (boundThreadsByNode.empty())
-        return ss.str();
-
-    bool isFirst = true;
-
-    for (auto&& [current, total] : boundThreadsByNode)
-    {
-        if (!isFirst)
-            ss << ":";
-        ss << current << "/" << total;
-        isFirst = false;
-    }
-
-    return ss.str();
-}
-
 std::string Engine::thread_allocation_information_as_string() const {
     std::stringstream ss;
 
     usize threadsSize = threads.size();
     ss << "Using " << threadsSize << (threadsSize > 1 ? " threads" : " thread");
-
-    auto boundThreadsByNodeStr = thread_binding_information_as_string();
-    if (boundThreadsByNodeStr.empty())
-        return ss.str();
-
-    ss << " with NUMA node thread binding: ";
-    ss << boundThreadsByNodeStr;
 
     return ss.str();
 }

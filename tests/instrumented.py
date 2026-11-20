@@ -607,23 +607,6 @@ class TestInvalidOptions(metaclass=OrderedClassMembers):
         self.stockfish.send_command("isready")
         self.stockfish.equals("readyok")
 
-    # Warn on bogus NUMA configs
-    def test_numa_garbage(self):
-        self.stockfish.send_command("setoption name NumaPolicy value zzz")
-        self.stockfish.expect("*NumaPolicy: invalid value 'zzz', keeping previous config.*")
-
-    def test_numa_malformed_range(self):
-        self.stockfish.send_command("setoption name NumaPolicy value 0-")
-        self.stockfish.expect("*NumaPolicy: invalid value '0-', keeping previous config.*")
-
-    def test_numa_overflow(self):
-        self.stockfish.send_command(
-            "setoption name NumaPolicy value 99999999999999999999999"
-        )
-        self.stockfish.expect("*NumaPolicy: invalid value*keeping previous config.*")
-        self.stockfish.send_command("isready")
-        self.stockfish.equals("readyok")
-
 
 class TestBenchFile(metaclass=OrderedClassMembers):
     def beforeEach(self):

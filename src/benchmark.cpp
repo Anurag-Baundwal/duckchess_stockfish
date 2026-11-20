@@ -18,7 +18,6 @@
 
 #include "benchmark.h"
 #include "engine.h"
-#include "numa.h"
 #include "misc.h"
 
 #include <algorithm>
