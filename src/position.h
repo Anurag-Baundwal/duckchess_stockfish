@@ -31,6 +31,7 @@
 
 #include "attacks.h"
 #include "bitboard.h"
+#include "psqt.h"
 #include "types.h"
 
 namespace Stockfish {
@@ -142,11 +143,8 @@ class Position {
 
     // Doing and undoing moves
     void do_move(Move m, StateInfo& newSt);
-    void do_move(Move                   m,
-                 StateInfo&             newSt,
-                 bool                   givesCheck,
-                 Dirties&               dirties,
-                 const SharedHistories* worker = nullptr);
+    void
+    do_move(Move m, StateInfo& newSt, bool givesCheck, const SharedHistories* worker = nullptr);
     void undo_move(Move m);
     void do_null_move(StateInfo& newSt);
     void undo_null_move();
@@ -163,16 +161,17 @@ class Position {
     Key non_pawn_key(Color c) const;
 
     // Other properties of the position
-    Color side_to_move() const;
-    int   game_ply() const;
-    bool  is_chess960() const;
-    bool  is_draw(int ply) const;
-    bool  is_repetition(int ply) const;
-    bool  upcoming_repetition(int ply) const;
-    bool  has_repeated() const;
-    int   rule50_count() const;
-    Value non_pawn_material(Color c) const;
-    Value non_pawn_material() const;
+    Color        side_to_move() const;
+    int          game_ply() const;
+    bool         is_chess960() const;
+    bool         is_draw(int ply) const;
+    bool         is_repetition(int ply) const;
+    bool         upcoming_repetition(int ply) const;
+    bool         has_repeated() const;
+    int          rule50_count() const;
+    Value        non_pawn_material(Color c) const;
+    Value        non_pawn_material() const;
+    TaperedScore psq_score() const;
 
     // Position consistency check, for debugging
     bool                            pos_is_ok() const;
@@ -181,9 +180,9 @@ class Position {
 
     StateInfo* state() const;
 
-    void put_piece(Piece pc, Square s, DirtyThreats* const dts = nullptr);
-    void remove_piece(Square s, DirtyThreats* const dts = nullptr);
-    void swap_piece(Square s, Piece pc, DirtyThreats* const dts = nullptr);
+    void put_piece(Piece pc, Square s);
+    void remove_piece(Square s);
+    void swap_piece(Square s, Piece pc);
 
    private:
     // Initialization helpers (used while setting up a position)
@@ -194,21 +193,9 @@ class Position {
     void compute_threats() const;
 
     // Other helpers
-    template<bool ComputeRay = true>
-    void update_piece_threats(Piece               pc,
-                              bool                putPiece,
-                              Square              s,
-                              DirtyThreats* const dts,
-                              Bitboard            noRaysContaining = -1ULL) const;
-    void move_piece(Square from, Square to, DirtyThreats* const dts = nullptr);
+    void move_piece(Square from, Square to);
     template<bool Do>
-    void do_castling(Color               us,
-                     Square              from,
-                     Square&             to,
-                     Square&             rfrom,
-                     Square&             rto,
-                     DirtyThreats* const dts = nullptr,
-                     DirtyPiece* const   dp  = nullptr);
+    void do_castling(Color us, Square from, Square& to, Square& rfrom, Square& rto);
     template<bool AfterMove = false>
     Key adjust_key50(Key k) const;
 
@@ -217,15 +204,15 @@ class Position {
     std::array<Bitboard, PIECE_TYPE_NB> byTypeBB;
     std::array<Bitboard, COLOR_NB>      byColorBB;
 
-    int        pieceCount[PIECE_NB];
-    int        castlingRightsMask[SQUARE_NB];
-    Square     castlingRookSquare[CASTLING_RIGHT_NB];
-    Bitboard   castlingPath[CASTLING_RIGHT_NB];
-    StateInfo* st;
-    int        gamePly;
-    Color      sideToMove;
-    bool       chess960;
-    Dirties    scratchDirties;
+    int          pieceCount[PIECE_NB];
+    int          castlingRightsMask[SQUARE_NB];
+    Square       castlingRookSquare[CASTLING_RIGHT_NB];
+    Bitboard     castlingPath[CASTLING_RIGHT_NB];
+    StateInfo*   st;
+    int          gamePly;
+    Color        sideToMove;
+    TaperedScore psq;
+    bool         chess960;
 };
 
 std::ostream& operator<<(std::ostream& os, const Position& pos);
@@ -340,6 +327,8 @@ inline Value Position::non_pawn_material() const {
     return non_pawn_material(WHITE) + non_pawn_material(BLACK);
 }
 
+inline TaperedScore Position::psq_score() const { return psq; }
+
 inline int Position::game_ply() const { return gamePly; }
 
 inline int Position::rule50_count() const { return st->rule50; }
@@ -376,22 +365,17 @@ inline bool Position::capture_stage(Move m) const {
 
 inline Piece Position::captured_piece() const { return st->capturedPiece; }
 
-inline void Position::put_piece(Piece pc, Square s, DirtyThreats* const dts) {
+inline void Position::put_piece(Piece pc, Square s) {
     board[s] = pc;
     byTypeBB[ALL_PIECES] |= byTypeBB[type_of(pc)] |= s;
     byColorBB[color_of(pc)] |= s;
     pieceCount[pc]++;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]++;
-
-    if (dts)
-        update_piece_threats(pc, true, s, dts);
+    psq += PSQT::psq[pc][s];
 }
 
-inline void Position::remove_piece(Square s, DirtyThreats* const dts) {
+inline void Position::remove_piece(Square s) {
     Piece pc = board[s];
-
-    if (dts)
-        update_piece_threats(pc, false, s, dts);
 
     byTypeBB[ALL_PIECES] ^= s;
     byTypeBB[type_of(pc)] ^= s;
@@ -399,44 +383,27 @@ inline void Position::remove_piece(Square s, DirtyThreats* const dts) {
     board[s] = NO_PIECE;
     pieceCount[pc]--;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]--;
+    psq -= PSQT::psq[pc][s];
 }
 
-inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts) {
+inline void Position::move_piece(Square from, Square to) {
     Piece    pc     = board[from];
     Bitboard fromTo = from | to;
-
-    if (dts)
-        update_piece_threats(pc, false, from, dts, fromTo);
 
     byTypeBB[ALL_PIECES] ^= fromTo;
     byTypeBB[type_of(pc)] ^= fromTo;
     byColorBB[color_of(pc)] ^= fromTo;
     board[from] = NO_PIECE;
     board[to]   = pc;
-
-    if (dts)
-        update_piece_threats(pc, true, to, dts, fromTo);
+    psq += PSQT::psq[pc][to] - PSQT::psq[pc][from];
 }
 
-inline void Position::swap_piece(Square s, Piece pc, DirtyThreats* const dts) {
-    Piece old = board[s];
-
+inline void Position::swap_piece(Square s, Piece pc) {
     remove_piece(s);
-
-    if (dts)
-        update_piece_threats<false>(old, false, s, dts);
-
     put_piece(pc, s);
-
-    if (dts)
-        update_piece_threats<false>(pc, true, s, dts);
 }
 
-inline void Position::do_move(Move m, StateInfo& newSt) {
-    new (&scratchDirties.dirtyThreats) DirtyThreats;
-    new (&scratchDirties.dirtyPawnPairs) DirtyPawnPairs;
-    do_move(m, newSt, gives_check(m), scratchDirties, nullptr);
-}
+inline void Position::do_move(Move m, StateInfo& newSt) { do_move(m, newSt, gives_check(m)); }
 
 inline StateInfo* Position::state() const { return st; }
 

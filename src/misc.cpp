@@ -602,30 +602,6 @@ bool is_whitespace(std::string_view s) {
 }
 
 
-// Return the directory where our Stockfish binary sits. This is useful,
-// because when the NNUE network is not embedded in the binary, this directory
-// is one of the locations where we look for the NNUE file.
-fs::path CommandLine::get_binary_directory(fs::path argv0) {
-
-#ifdef _WIN32
-    // Prefer the executable path reported by Windows. Unlike _get_wpgmptr,
-    // this does not depend on whether the CRT used a narrow or wide entry
-    // point. Windows paths cannot exceed 32767 characters, so a fixed
-    // buffer is always sufficient. Falls back to argv0 if the API fails.
-    constexpr DWORD MaxPath = 32768;
-    wchar_t         path[MaxPath];
-
-    if (const DWORD length = GetModuleFileNameW(nullptr, path, MaxPath))
-        argv0 = fs::path(path, path + length);
-#endif
-
-    auto binaryDirectory = argv0.parent_path();
-    if (binaryDirectory.empty())
-        binaryDirectory = fs::path(".");
-    return binaryDirectory;
-}
-
-
 // On Windows, tell the console to use UTF8 encoding
 void set_console_utf8() {
 #ifdef _WIN32

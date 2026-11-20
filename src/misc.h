@@ -521,8 +521,6 @@ struct CommandLine {
     CommandLine(CommandLine&&)                 = default;
     CommandLine& operator=(CommandLine&&)      = default;
 
-    static std::filesystem::path get_binary_directory(std::filesystem::path argv0);
-
     int    argc;
     char** argv;
 

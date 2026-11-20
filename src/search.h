@@ -33,7 +33,6 @@
 
 #include "history.h"
 #include "misc.h"
-#include "nnue/nnue_accumulator.h"
 #include "numa.h"
 #include "position.h"
 #include "score.h"
@@ -52,10 +51,6 @@ enum NodeType {
 class TranspositionTable;
 class ThreadPool;
 class OptionsMap;
-
-namespace Eval::NNUE {
-class Network;
-}
 
 namespace Search {
 
@@ -190,22 +185,19 @@ struct LimitsType {
 // The UCI stores the uci options, thread pool, and transposition table.
 // This struct is used to easily forward data to the Search::Worker class.
 struct SharedState {
-    SharedState(const OptionsMap&                                        optionsMap,
-                ThreadPool&                                              threadPool,
-                TranspositionTable&                                      transpositionTable,
-                std::map<NumaIndex, SharedHistories>&                    sharedHists,
-                const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& net) :
+    SharedState(const OptionsMap&                     optionsMap,
+                ThreadPool&                           threadPool,
+                TranspositionTable&                   transpositionTable,
+                std::map<NumaIndex, SharedHistories>& sharedHists) :
         options(optionsMap),
         threads(threadPool),
         tt(transpositionTable),
-        sharedHistories(sharedHists),
-        network(net) {}
+        sharedHistories(sharedHists) {}
 
-    const OptionsMap&                                        options;
-    ThreadPool&                                              threads;
-    TranspositionTable&                                      tt;
-    std::map<NumaIndex, SharedHistories>&                    sharedHistories;
-    const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
+    const OptionsMap&                     options;
+    ThreadPool&                           threads;
+    TranspositionTable&                   tt;
+    std::map<NumaIndex, SharedHistories>& sharedHistories;
 };
 
 class Worker;
@@ -321,8 +313,6 @@ class Worker {
 
     bool is_mainthread() const { return threadIdx == 0; }
 
-    void ensure_network_replicated();
-
     // Public because they need to be updatable by the stats
     ButterflyHistory mainHistory;
     LowPlyHistory    lowPlyHistory;
@@ -392,14 +382,9 @@ class Worker {
     // The main thread has a SearchManager, the others have a nullptr
     std::unique_ptr<SearchManager> manager;
 
-    const OptionsMap&                                        options;
-    ThreadPool&                                              threads;
-    TranspositionTable&                                      tt;
-    const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
-
-    // Used by NNUE
-    Eval::NNUE::AccumulatorStack  accumulatorStack;
-    Eval::NNUE::AccumulatorCaches refreshTable;
+    const OptionsMap&   options;
+    ThreadPool&         threads;
+    TranspositionTable& tt;
 
     friend class Stockfish::ThreadPool;
     friend class SearchManager;

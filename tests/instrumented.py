@@ -169,42 +169,6 @@ class TestCLI(metaclass=OrderedClassMembers):
         self.stockfish = Stockfish("uci".split(" "), True)
         assert self.stockfish.process.returncode == 0
 
-    def test_export_net_verify_nnue(self):
-        current_path = os.path.abspath(os.getcwd())
-        self.stockfish = Stockfish(
-            f"export_net {os.path.join(current_path, 'verify.nnue')}".split(" "), True
-        )
-        assert self.stockfish.process.returncode == 0
-
-    # verify the generated net equals the base net
-
-    def test_network_equals_base(self):
-        self.stockfish = Stockfish(
-            ["uci"],
-            True,
-        )
-
-        output = self.stockfish.process.stdout
-
-        # find line
-        for line in output.split("\n"):
-            if "option name EvalFile type string default" in line:
-                network = line.split(" ")[-1]
-                break
-
-        # find network file in src dir
-        network = os.path.join(PATH.parent.resolve(), "src", network)
-
-        if not os.path.exists(network):
-            print(
-                f"Network file {network} not found, please download the network file over the make command."
-            )
-            assert False
-
-        diff = subprocess.run(["diff", network, f"verify.nnue"])
-
-        assert diff.returncode == 0
-
 
 class TestInteractive(metaclass=OrderedClassMembers):
     def beforeAll(self):
@@ -413,17 +377,6 @@ class TestInteractive(metaclass=OrderedClassMembers):
         self.stockfish.send_command("go depth 18 searchmoves e3e2")
         self.stockfish.expect("* score mate -1 * pv e3e2 f7f5")
         self.stockfish.starts_with("bestmove e3e2")
-
-    def test_verify_nnue_network(self):
-        current_path = os.path.abspath(os.getcwd())
-        Stockfish(
-            f"export_net {os.path.join(current_path, 'verify.nnue')}".split(" "), True
-        )
-
-        self.stockfish.send_command("setoption name EvalFile value verify.nnue")
-        self.stockfish.send_command("position startpos")
-        self.stockfish.send_command("go depth 5")
-        self.stockfish.starts_with("bestmove")
 
     def test_multipv_setting(self):
         self.stockfish.send_command("setoption name MultiPV value 4")
