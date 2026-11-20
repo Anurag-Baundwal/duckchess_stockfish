@@ -20,60 +20,45 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
-#include <cstdlib>
 #include <iomanip>
-#include <iostream>
-#include <memory>
 #include <sstream>
 
-#include "misc.h"
-#include "nnue/network.h"
-#include "nnue/nnue_misc.h"
 #include "position.h"
 #include "types.h"
 #include "uci.h"
-#include "nnue/nnue_accumulator.h"
 
 namespace Stockfish {
 
-static int simple_eval(const Position& pos) {
-    const Color c = pos.side_to_move();
-    return PawnValue * (pos.count<PAWN>(c) - pos.count<PAWN>(~c)) + pos.non_pawn_material(c)
-         - pos.non_pawn_material(~c);
+namespace {
+
+// Game phase limits of Stockfish 11: with at least MidgameLimit of non-pawn
+// material on the board the position counts as a pure middlegame, with at most
+// EndgameLimit as a pure endgame.
+constexpr Value MidgameLimit = 15258;
+constexpr Value EndgameLimit = 3915;
+constexpr int   PhaseMidgame = 128;
+
+// Returns the game phase, from 0 (endgame) to PhaseMidgame (middlegame)
+int game_phase(const Position& pos) {
+    Value npm = std::clamp(pos.non_pawn_material(), EndgameLimit, MidgameLimit);
+    return (npm - EndgameLimit) * PhaseMidgame / (MidgameLimit - EndgameLimit);
 }
 
-Value scale_evaluation(Value nnue, int optimism, const Position& pos);
+// Interpolates between the middlegame and the endgame value of a score
+Value interpolate(TaperedScore s, int phase) {
+    return (mg_value(s) * phase + eg_value(s) * (PhaseMidgame - phase)) / PhaseMidgame;
+}
 
-Value Eval::evaluate(const Eval::NNUE::Network&     network,
-                     const Position&                pos,
-                     Eval::NNUE::AccumulatorStack&  accumulators,
-                     Eval::NNUE::AccumulatorCaches& caches,
-                     int                            optimism) {
+}  // namespace
+
+// Evaluates the position from the point of view of the side to move: material
+// and piece-square tables, tapered by the game phase.
+Value Eval::evaluate(const Position& pos) {
 
     assert(!pos.checkers());
-    Value nnue = network.evaluate(pos, accumulators, caches);
-    return scale_evaluation(nnue, optimism, pos);
-}
 
-// Applies search-dependent scaling (optimism and rule50) to the raw NNUE eval
-Value scale_evaluation(Value nnue, int optimism, const Position& pos) {
-    Value se = simple_eval(pos);
-
-    // Normalize the raw evaluations to [-1024, 1024] to measure their correlation.
-    int se_norm   = (se * 1024) / (std::abs(se) + 1024);
-    int nnue_norm = (nnue * 1024) / (std::abs(nnue) + 1024);
-    // When NNUE and material agree (positive correlation), the position is straightforward;
-    // otherwise (negative correlation) it involves complex compensation. In a representative
-    // sample, correl averages -1 or so, i.e. it is well-centered in [-2048, 2048].
-    int correl = (se_norm * nnue_norm) / 512;
-
-    // When winning, we boost easy positions, and vice versa
-    int v = nnue + (nnue + optimism) * correl / 65536;
-
-    // Scale the combined evaluation by total material
-    int material = 521 * pos.count<PAWN>() + pos.non_pawn_material();
-    v += i64(material) * v / 90649;
+    Value v = interpolate(pos.psq_score(), game_phase(pos));
+    v       = pos.side_to_move() == WHITE ? v : -v;
 
     // Damp down the evaluation linearly when shuffling
     v -= v * pos.rule50_count() / 189;
@@ -88,32 +73,22 @@ Value scale_evaluation(Value nnue, int optimism, const Position& pos) {
 // a string (suitable for outputting to stdout) that contains the detailed
 // descriptions and values of each evaluation term. Useful for debugging.
 // Trace scores are from white's point of view
-std::string Eval::trace(Position& pos, const Eval::NNUE::Network& network) {
+std::string Eval::trace(Position& pos) {
 
     if (pos.checkers())
         return "Final evaluation: none (in check)";
 
-    auto accumulators = std::make_unique<Eval::NNUE::AccumulatorStack>();
-    auto caches       = std::make_unique<Eval::NNUE::AccumulatorCaches>(network);
+    TaperedScore s     = pos.psq_score();
+    int          phase = game_phase(pos);
+    Value        v     = evaluate(pos);
+    v                  = pos.side_to_move() == WHITE ? v : -v;
 
     std::stringstream ss;
-    ss << std::showpoint << std::noshowpos << std::fixed << std::setprecision(2);
-    ss << '\n' << NNUE::trace(pos, network, *caches) << '\n';
-
-    ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2) << std::setw(15);
-
-    Value nnue = network.evaluate(pos, *accumulators, *caches);
-    Value s_v  = scale_evaluation(nnue, VALUE_ZERO, pos);  // requires stm perspective
-
-    ss << "NNUE evaluation          " << nnue << " (side to move, internal units)\n";
-
-    nnue = pos.side_to_move() == WHITE ? nnue : -nnue;
-    s_v  = pos.side_to_move() == WHITE ? s_v : -s_v;
-
-    ss << "NNUE evaluation        " << 0.01 * UCIEngine::to_cp(nnue, pos) << " (white side)\n";
-    ss << "Final evaluation      ";
-    ss << 0.01 * UCIEngine::to_cp(s_v, pos) << " (white side)";
-    ss << " [with scaled NNUE, ...]\n";
+    ss << "Material and PSQT        mg " << mg_value(s) << ", eg " << eg_value(s) << ", phase "
+       << phase << "/" << PhaseMidgame << " (white side, internal units)\n";
+    ss << "Final evaluation         " << v << " (white side, internal units)\n";
+    ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2);
+    ss << "Final evaluation       " << 0.01 * UCIEngine::to_cp(v, pos) << " (white side)\n";
 
     return ss.str();
 }

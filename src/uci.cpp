@@ -28,7 +28,6 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
-#include <filesystem>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -71,7 +70,6 @@ void UCIEngine::print_info_string(std::string_view str) {
 }
 
 UCIEngine::UCIEngine(CommandLine cli_) :
-    engine(cli_.argc > 0 ? std::optional{path_from_utf8(cli_.argv[0])} : std::nullopt),
     cli(std::move(cli_)) {
 
     engine.get_options().add_info_listener([](const std::optional<std::string>& str) {
@@ -89,7 +87,6 @@ void UCIEngine::init_search_update_listeners() {
       [this](const auto& i) { on_update_full(i, engine.get_options()["UCI_ShowWDL"]); });
     engine.set_on_start([]() {});
     engine.set_on_bestmove([](const auto& bm, const auto& p) { on_bestmove(bm, p); });
-    engine.set_on_verify_network([](const auto& s) { print_info_string(s); });
 }
 
 void UCIEngine::loop() {
@@ -163,16 +160,6 @@ void UCIEngine::loop() {
             engine.trace_eval();
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
-        else if (token == "export_net")
-        {
-            std::optional<std::filesystem::path> file;
-            std::string                          filename;
-
-            if (is >> filename)
-                file = path_from_utf8(filename);
-
-            engine.save_network(file);
-        }
         else if (token == "--help" || token == "help" || token == "--license" || token == "license")
             sync_cout
               << "\nStockfish is a powerful chess engine for playing and analyzing."
@@ -331,7 +318,6 @@ void UCIEngine::benchmark(std::istream& args) {
     engine.set_on_iter([](const auto&) {});
     engine.set_on_update_no_moves([](const auto&) {});
     engine.set_on_bestmove([](const auto&, const auto&) {});
-    engine.set_on_verify_network([](const auto&) {});
 
     Benchmark::BenchmarkSetup setup = Benchmark::setup_benchmark(args);
 
@@ -360,7 +346,6 @@ void UCIEngine::benchmark(std::istream& args) {
 
             Search::LimitsType limits = parse_limits(is);
 
-            // Run with silenced network verification
             engine.go(limits);
             engine.wait_for_search_finished();
         }
@@ -428,7 +413,6 @@ void UCIEngine::benchmark(std::istream& args) {
 
             Search::LimitsType limits = parse_limits(is);
 
-            // Run with silenced network verification
             engine.go(limits);
             engine.wait_for_search_finished();
 
