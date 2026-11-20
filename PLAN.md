@@ -2,8 +2,8 @@
 
 A duck chess engine built on Stockfish's infrastructure. This plan covers the
 board representation, movegen and perft, then a very simple handcrafted eval
-and search. Search improvements and OpenBench integration come later, one SPRT
-at a time.
+and search, then OpenBench support (Phase 5). From then on, every search and
+eval improvement is validated with an SPRT, one change at a time.
 
 - Base: official-stockfish/Stockfish ff7cee42 (2026-10-28), Bench 1556650,
   tagged `sf-base`. Stockfish 11 (last handcrafted eval) is in the same history
@@ -21,6 +21,11 @@ at a time.
     castling as `e1g1,g1b1`.
   - Having no legal move is a win for the side to move.
 - Reference perft from the start position: depth 1 = 640, depth 2 = 379440.
+- Duck960 (double Fischer random starts) is what wakwak tests with, and what
+  we will test with (Phase 5): engine options `UCI_Variant=duck
+  UCI_Chess960=true`, castling written as king takes rook (`e1h1`). The exact
+  duck suffix for 960 castling is checked against Fairy-Stockfish and
+  fastchess in Phase 2.
 
 ## Ground rules
 
@@ -98,7 +103,8 @@ at a time.
     `gives_check`, `EVASIONS` and the check-based `legal()`.
   - Kings can be captured.
   - Castling needs its path free of pieces *and* the duck; castling out of or
-    through attacked squares is allowed.
+    through attacked squares is allowed. Stockfish's Chess960 castling stays:
+    in Duck960 both the king's and the rook's paths must be free of the duck.
   - The duck blocks pushes, double pushes and en passant.
   - The duck must move to a different empty square each turn; it may land on
     the square the piece just left.
@@ -112,10 +118,12 @@ at a time.
   - Check against Fairy-Stockfish whether king captures also get ducks.
 - **2.4 UCI** (`src/uci.cpp` `UCIEngine::move` / `to_move`):
   - Print and parse `e2e4,e4d5`, with castling as the king's destination in
-    standard chess.
+    standard chess, and as king takes rook with `UCI_Chess960`.
   - Accept a king capture without the duck suffix, as fastchess does.
   - Add a `UCI_Variant` combo with `duck` as default and only value, so
-    fastchess `-variant duck` can set it.
+    fastchess (`-variant duck` and `duck960`) and the OpenBench presets
+    (`UCI_Variant=duck UCI_Chess960=true`) can set it.
+  - FEN: Shredder/X-FEN castling fields (e.g. `HAha`) keep working with `*`.
 - **2.5 Perft** (`src/perft.h`):
   - Divide output in Fairy-Stockfish's format (`e2e4,e4e2: 1`,
     `Nodes searched: N`).
@@ -140,6 +148,9 @@ at a time.
     - no moves at all (a win)
     - a boxed-in king
     - about 40 positions from random Fairy-Stockfish playouts
+    - Duck960: DFRC starts and positions after a few moves, castling with the
+      duck on the king's or the rook's path, checked with `UCI_Chess960 true`
+      (first confirm that Fairy-Stockfish supports duck with Chess960)
   - Optional: cross-check a subset with wakwak's `perft`, if the Rust
     toolchain is installed.
 
@@ -156,19 +167,55 @@ at a time.
     (start at K = 5, as wakwak's first qsearch did).
   - The TT stores the full move; mate scores and repetition draws handled.
 - **3.3 Bench:** replace `Defaults` in `src/benchmark.cpp` with about 20 duck
-  FENs from Fairy-Stockfish games. Set the default bench depth so `bench`
-  takes a few seconds.
+  FENs from Fairy-Stockfish games, some of them Duck960. Set the default
+  bench depth so `bench` takes a few seconds.
 - **3.4 Next** (separate plans, one SPRT each): Duck or Die, duck refutations,
   duckless TT, neutral ducks, unique-move LMR/LMP, then Stockfish's search
   features re-added one at a time. See the analysis file.
 
 ## Phase 4: legality smoke test (local)
 
-- Build Silverrzz/fastchess at a pinned SHA.
+- Build Silverrzz/fastchess pinned at `cfa3671a44` (its "duck960" commit, two
+  commits on top of upstream fastchess `4e691463ce`).
 - Play 100+ games at a short time control against itself and against
-  `fsf-duck.exe`.
+  `fsf-duck.exe`: `-variant duck960` with the DFRC book of Phase 5, and
+  `-variant duck` from the start position.
 - Pass condition: no illegal moves, crashes or timeouts.
-- OpenBench support (per-variant runner) is a separate plan.
+
+## Phase 5: OpenBench
+
+wakwak's test setup, from its OpenBench instance (chess.n9x.co, checked
+2026-11-21), which we copy:
+- Variant Duck960, engine options `UCI_Variant=duck UCI_Chess960=true`.
+- Book `Duck_DFRC.epd` = `DFRC_4852_v2.epd.zip` from
+  https://file.ax/DFRC_4852_v2.epd.zip (121 MB zipped, sha256 `54f494a2…`):
+  DFRC start positions without a duck. Silverrzz/wakwak-books (generated duck
+  books, no license file) is not used by its presets.
+- Match runner: Silverrzz/fastchess `-variant duck960`.
+- Presets: STC 8+0.08 (Hash 16), LTC 40+0.4 (Hash 64); gainers `[0, 4.20]`,
+  non-regression `[-4.20, 0]`, confidence `[0.10, 0.05]`; win adjudication
+  `movecount=8 score=800`, draw adjudication `movenumber=32 movecount=10
+  score=0`; scale_nps 700000; workload 32 at STC, 8 at LTC.
+
+Our fork (`repos7/openbench`) is 4PC-only today: Teams through `match.py`, FFA
+through `ffa_match.py`. **Teams and FFA must keep working unchanged.**
+- A `variant` field on EngineConfig and Test, default empty (= 4PC, where the
+  `ffa` flag still picks Teams or FFA), following the FFA precedent
+  (416782b) and MattBench 213d671's per-variant runners. Every new code path
+  is gated on it; `match.py` and `ffa_match.py` are not edited.
+- Server: migration, `import_engines` reads `variants` (`Duck960`,
+  `Duckchess`), `verify_workload.py` requires Dev and Base of the same
+  variant and keeps the 4PC limits for 4PC tests, `get_workload.py` sends the
+  runner config, `Engines/duckchess_stockfish.json` with presets copied from
+  wakwak's, the book through a Books migration.
+- Client: for duck workloads, build the pinned fastchess into
+  `Runners/<variant>`, run it with `-variant duck960`, the book, adjudication,
+  `-pgnout` and `-recover`, and parse its "Finished game" lines; add
+  fastchess to the cleanup lists; bump the client version.
+- Before relying on it: Teams, FFA and duck tests side by side on a local
+  server and worker.
+- First test: a fixed-games duck test (dev = base) to prove the pipeline,
+  then SPRTs against master for every change from 3.4 on.
 
 ## Verification
 
@@ -189,3 +236,5 @@ at a time.
     mate in 1 (king capture).
 - **Phase 4:** the fastchess games finish with 0 illegal moves, crashes or
   timeouts.
+- **Phase 5:** a fixed-games duck test finishes on OpenBench, while Teams and
+  FFA tests keep running as before.

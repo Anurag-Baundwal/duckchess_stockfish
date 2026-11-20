@@ -23,10 +23,11 @@ Status
 [ ] 1.4  remove NUMA, large pages, shared memory
 [ ] 1.5  minimal chess search
 [ ] 1.6  32-bit Move + TT
-[ ] 2.1-2.6  duck rules, movegen, UCI, perft
+[ ] 2.1-2.6  duck rules, movegen, UCI, perft (standard and Duck960)
 [ ] 2.7  perft suite matches Fairy-Stockfish (n/n positions)
 [ ] 3.1-3.3  duck HCE, search, bench
-[ ] 4    fastchess smoke test
+[ ] 4    fastchess smoke test (duck960 and duck)
+[ ] 5    OpenBench: duck variant next to Teams and FFA; SPRTs from then on
 
 
 Quick reference
@@ -144,7 +145,7 @@ Journal
   - It serves Phase 1 (still chess). Phase 2 replaces chess perft with the
     duck perft suite checked against Fairy-Stockfish.
 
-2026-11-21  1.3b Replace NNUE with SF11 material + PSQT            (this commit)
+2026-11-21  1.3b Replace NNUE with SF11 material + PSQT            362eddab
   - The 2026-10-31 session stopped halfway through this step (weekly usage
     limit) with the eval, Position and types changes written but never
     compiled. The 2026-11-21 session finished it.
@@ -172,9 +173,18 @@ Journal
   - Leftover from 1.2: tests/instrumented.py still has the TestSyzygy class.
     Nothing runs it since CI was removed.
 
+2026-11-21  -  Plan Duck960 and the OpenBench integration     (this commit)
+  - wakwak runs all its SPRTs as Duck960 (DFRC starts) with the book
+    Duck_DFRC.epd and Silverrzz/fastchess; PLAN.md records its presets and
+    adds Duck960 to Phases 2-4 and a Phase 5 for OpenBench, which must keep
+    4PC Teams and FFA working unchanged.
+
 
 Next steps
 ----------
 1. 1.4  Remove NUMA, large pages, shared memory (bench unchanged).
 2. 1.5  Minimal chess search.  3. 1.6  32-bit Move + 2-entry TT clusters.
-4. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish.
+4. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
+   including Duck960 (PLAN.md).
+5. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
+   Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact.
