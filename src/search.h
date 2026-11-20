@@ -24,8 +24,8 @@
 #include <atomic>
 #include <cassert>
 #include <functional>
-#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,7 +33,6 @@
 
 #include "history.h"
 #include "misc.h"
-#include "numa.h"
 #include "position.h"
 #include "score.h"
 #include "timeman.h"
@@ -185,19 +184,19 @@ struct LimitsType {
 // The UCI stores the uci options, thread pool, and transposition table.
 // This struct is used to easily forward data to the Search::Worker class.
 struct SharedState {
-    SharedState(const OptionsMap&                     optionsMap,
-                ThreadPool&                           threadPool,
-                TranspositionTable&                   transpositionTable,
-                std::map<NumaIndex, SharedHistories>& sharedHists) :
+    SharedState(const OptionsMap&               optionsMap,
+                ThreadPool&                     threadPool,
+                TranspositionTable&             transpositionTable,
+                std::optional<SharedHistories>& sharedHists) :
         options(optionsMap),
         threads(threadPool),
         tt(transpositionTable),
         sharedHistories(sharedHists) {}
 
-    const OptionsMap&                     options;
-    ThreadPool&                           threads;
-    TranspositionTable&                   tt;
-    std::map<NumaIndex, SharedHistories>& sharedHistories;
+    const OptionsMap&               options;
+    ThreadPool&                     threads;
+    TranspositionTable&             tt;
+    std::optional<SharedHistories>& sharedHistories;
 };
 
 class Worker;
@@ -301,8 +300,7 @@ class SearchManager {
 // of the search history, and storing data required for the search.
 class Worker {
    public:
-    Worker(
-      SharedState&, std::unique_ptr<SearchManager>, usize, usize, usize, NumaReplicatedAccessToken);
+    Worker(SharedState&, std::unique_ptr<SearchManager>, usize, usize);
 
     // Reset histories, usually before a new game.
     void clear();
@@ -376,8 +374,7 @@ class Worker {
 
     PVMoves lastIterationIdxPV;
 
-    usize                     threadIdx, numaThreadIdx, numaTotal;
-    NumaReplicatedAccessToken numaAccessToken;
+    usize threadIdx, numThreads;
 
     // The main thread has a SearchManager, the others have a nullptr
     std::unique_ptr<SearchManager> manager;

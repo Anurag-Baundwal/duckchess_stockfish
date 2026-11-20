@@ -83,7 +83,7 @@ struct TTWriter {
 class TranspositionTable {
 
    public:
-    ~TranspositionTable() { aligned_large_pages_free(table); }
+    ~TranspositionTable() { std_aligned_free(table); }
 
     // Set TT size in MiB
     void resize(usize mbSize, ThreadPool& threads);

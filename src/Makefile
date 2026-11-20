@@ -83,7 +83,7 @@ SRCS = attacks.cpp benchmark.cpp bitboard.cpp evaluate.cpp main.cpp \
 
 HEADERS = attacks.h benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.h \
 		position.h psqt.h search.h thread.h thread_native.h timeman.h \
-		tt.h tune.h types.h uci.h ucioption.h perft.h engine.h score.h numa.h memory.h shm.h shm_unix.h
+		tt.h tune.h types.h uci.h ucioption.h perft.h engine.h score.h memory.h
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
@@ -670,19 +670,6 @@ ifneq ($(OS),Android)
 		ifneq ($(COMP),ndk)
 		ifneq ($(arch),wasm32)
 			LDFLAGS += -lpthread
-
-			add_lrt = yes
-			ifeq ($(target_windows),yes)
-				add_lrt = no
-			endif
-
-			ifeq ($(TARGET_KERNEL),Darwin)
-				add_lrt = no
-			endif
-
-			ifeq ($(add_lrt),yes)
-				LDFLAGS += -lrt
-			endif
 		endif
 		endif
 	endif

@@ -23,8 +23,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <numeric>
-#include <vector>
 
 #include "bitboard.h"
 #include "memory.h"
@@ -179,16 +177,12 @@ void TTWriter::penalize(int penalty) {
 // Transposition table consists of clusters and each cluster consists
 // of ClusterSize number of TTEntry.
 void TranspositionTable::resize(usize mbSize, ThreadPool& threads) {
-    aligned_large_pages_free(table);
+    std_aligned_free(table);
 
-    clusterCount  = mbSize * 1024 * 1024 / sizeof(Cluster);
-    usize ttBytes = clusterCount * sizeof(Cluster);
+    clusterCount = mbSize * 1024 * 1024 / sizeof(Cluster);
 
-    // Request 1GB pages if we'd get at least eight per NUMA node, to avoid
-    // memory oversubscription
-    bool hugePageHint = ttBytes >= threads.numa_nodes() * HugePageSize * 8;
-
-    table = static_cast<Cluster*>(aligned_large_pages_alloc_with_hint(ttBytes, hugePageHint));
+    // Page-aligned, so that no cluster crosses a cache line
+    table = static_cast<Cluster*>(std_aligned_alloc(4096, clusterCount * sizeof(Cluster)));
 
     if (!table)
     {
@@ -205,23 +199,9 @@ void TranspositionTable::clear(ThreadPool& threads) {
     generation8             = 0;
     const usize threadCount = threads.num_threads();
 
-    std::vector<usize> threadToNuma = threads.get_bound_thread_to_numa_node();
-
-    std::vector<usize> order(threadCount);
-    std::iota(order.begin(), order.end(), 0);
-
-    // To promote good NUMA distribution (esp. with huge pages), we permute
-    // threads so that all threads in a NUMA node clear a contiguous region.
-    if (threadToNuma.size() == threadCount)
-    {
-        std::stable_sort(order.begin(), order.end(), [&threadToNuma](usize t1, usize t2) {
-            return threadToNuma.at(t1) < threadToNuma.at(t2);
-        });
-    }
-
     for (usize i = 0; i < threadCount; ++i)
     {
-        threads.run_on_thread(order[i], [this, i, threadCount]() {
+        threads.run_on_thread(i, [this, i, threadCount]() {
             // Each thread will zero its part of the hash table
             const usize stride = clusterCount / threadCount;
             const usize start  = stride * i;

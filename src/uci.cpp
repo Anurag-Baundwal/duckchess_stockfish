@@ -34,7 +34,6 @@
 
 #include "benchmark.h"
 #include "engine.h"
-#include "memory.h"
 #include "movegen.h"
 #include "position.h"
 #include "score.h"
@@ -131,7 +130,6 @@ void UCIEngine::loop() {
         else if (token == "go")
         {
             // send info strings after the go command is sent for old GUIs and python-chess
-            print_info_string(engine.numa_config_information_as_string());
             print_info_string(engine.thread_allocation_information_as_string());
             go(is);
         }
@@ -437,10 +435,6 @@ void UCIEngine::benchmark(std::istream& args) {
       std::size(hashfullAges) == 2 && hashfullAges[0] == 0 && hashfullAges[1] == 999,
       "Hardcoded for display. Would complicate the code needlessly in the current state.");
 
-    std::string threadBinding = engine.thread_binding_information_as_string();
-    if (threadBinding.empty())
-        threadBinding = "none";
-
     // clang-format off
 
     std::cerr << "==========================="
@@ -448,13 +442,10 @@ void UCIEngine::benchmark(std::istream& args) {
               << engine_version_info()
               // "\nCompiled by                : "
               << compiler_info()
-              << "Large pages                : " << (has_large_pages() ? "yes" : "no")
-              << "\nUser invocation            : " << BenchmarkCommand << " "
+              << "User invocation            : " << BenchmarkCommand << " "
               << setup.originalInvocation << "\nFilled invocation          : " << BenchmarkCommand
               << " " << setup.filledInvocation
-              << "\nAvailable processors       : " << engine.get_numa_config_as_string()
               << "\nThread count               : " << setup.threads
-              << "\nThread binding             : " << threadBinding
               << "\nTT size [MiB]              : " << setup.ttSize
               << "\nHash max, avg [per mille]  : "
               << "\n    single search          : " << maxHashfull[0] << ", "

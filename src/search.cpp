@@ -161,16 +161,12 @@ bool is_shuffling(Move move, Stack* const ss, const Position& pos) {
 Search::Worker::Worker(SharedState&                   sharedState,
                        std::unique_ptr<SearchManager> sm,
                        usize                          threadId,
-                       usize                          numaThreadId,
-                       usize                          numaTotalThreads,
-                       NumaReplicatedAccessToken      token) :
+                       usize                          threadCount) :
     // Unpack the SharedState struct into member variables
-    sharedHistory(sharedState.sharedHistories.at(token.get_numa_index())),
+    sharedHistory(*sharedState.sharedHistories),
     continuationHistory(sharedHistory.continuationHistory()),
     threadIdx(threadId),
-    numaThreadIdx(numaThreadId),
-    numaTotal(numaTotalThreads),
-    numaAccessToken(token),
+    numThreads(threadCount),
     manager(std::move(sm)),
     options(sharedState.options),
     threads(sharedState.threads),
@@ -677,11 +673,11 @@ void Search::Worker::clear() {
     captureHistory.fill(-742);
 
     // Each thread clears its part of the dynamically-sized shared histories.
-    // The constant-size continuation history is initialized by thread 0 of each NUMA node.
-    sharedHistory.correctionHistory.clear_range(-5, numaThreadIdx, numaTotal);
-    sharedHistory.pawnHistory.clear_range(-1338, numaThreadIdx, numaTotal);
+    // The constant-size continuation history is initialized by thread 0.
+    sharedHistory.correctionHistory.clear_range(-5, threadIdx, numThreads);
+    sharedHistory.pawnHistory.clear_range(-1338, threadIdx, numThreads);
 
-    if (numaThreadIdx == 0)
+    if (threadIdx == 0)
         for (bool inCheck : {false, true})
             for (StatsType c : {NoCaptures, Captures})
                 for (auto& to : continuationHistory[inCheck][c])

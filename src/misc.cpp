@@ -35,6 +35,7 @@
 #include <mutex>
 #include <sstream>
 #include <string_view>
+#include <thread>
 
 #if defined(_WIN32)
     #ifndef NOMINMAX
@@ -178,6 +179,11 @@ std::string engine_info(bool to_uci) {
     return engine_version_info() + (to_uci ? "\nid author " : " by ")
          + "the Stockfish developers (see AUTHORS file)";
 }
+
+
+// Returns the number of hardware threads, at least 1. The engine does not bind
+// threads to processors, so this is what std::thread can see.
+usize get_hardware_concurrency() { return std::max(1u, std::thread::hardware_concurrency()); }
 
 
 // Returns a string trying to describe the compiler we use
