@@ -22,7 +22,7 @@ Status
 [x] 1.3  HCE replaces NNUE (SF11 material + PSQT)
 [x] 1.4  remove NUMA, large pages, shared memory
 [x] 1.5  minimal chess search
-[ ] 1.6  32-bit Move + TT
+[x] 1.6  32-bit Move + TT
 [ ] 2.1-2.6  duck rules, movegen, UCI, perft (standard and Duck960)
 [ ] 2.7  perft suite matches Fairy-Stockfish (n/n positions)
 [ ] 3.1-3.3  duck HCE, search, bench
@@ -206,7 +206,7 @@ Journal
   - Unused since 1.3 and kept for a later duck NNUE: src/incbin, and
     memory.h's AlignedPtr, make_unique_aligned, align_ptr_up and load_as.
 
-2026-11-21  1.5  Minimal chess search                         (this commit)
+2026-11-21  1.5  Minimal chess search                              6def61fb
   - search() is plain PVS: TT probe and cutoff, mate distance pruning, then
     every move; at PV nodes the first move gets the full window and the
     rest a null window, re-searched with the full window when they beat
@@ -247,11 +247,35 @@ Journal
     (none); MultiPV 3, searchmoves, Threads 4 and 8, a clock search.
     Startpos depth 9: 3.6M nodes in 0.4 s; bench 7.2M nps on this laptop.
 
+2026-11-21  1.6  32-bit Move with a duck field, 2-entry TT    (this commit)
+  - Move is 32 bits: the low 16 keep Stockfish's layout and bits 16-21 hold
+    the duck square (Move::duck_sq(), DuckSqShift = 16), always 0 for now.
+    raw() returns all 32 bits. chess_raw() returns the low 16, which index
+    the butterfly history, so it stays 2 x 65536 entries.
+  - TT: an entry is 12 bytes (the 32-bit move after 2 bytes of padding), so
+    a 32-byte cluster holds 2 entries next to the packed key word. The keys
+    stay 21 bits each, in 42 of its 64 bits. A 16 MB table holds 1.05M
+    entries instead of 1.57M. The TTEntry comment also lost its stale
+    "key 16 bit" line.
+  - The AVX-512 VBMI2 move generator (USE_AVX512ICL: Ice Lake and newer,
+    Zen 4) writes 32-bit moves: 8 pawn moves with one 256-bit store, 32
+    piece moves with two 512-bit stores. This laptop has no AVX-512, so that
+    path and the AVX-512 move sorter are only compiled here
+    (ARCH=x86-64-avx512icl and x86-64-avx512, no warnings). Check the bench
+    on an AVX-512 machine before trusting them.
+  - Speed: paired benches on two P-cores, 20 rounds: -0.39% +- 0.31% nps.
+  - The bench grows 8%, all of it in position 37's qsearch (+2.2M nodes)
+    with the smaller table. The other 48 positions differ by 74 nodes at
+    most, and 36 of them are identical.
+  - Verified: Bench 29784993 (two runs; also the debug build with
+    assertions and the NDK build on one tablet core); clean build without
+    warnings; chess perft 20/20 OK; Threads 4 and MultiPV 2 searches under
+    assertions.
+
 
 Next steps
 ----------
-1. 1.6  32-bit Move + 2-entry TT clusters.
-2. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
-   including Duck960 (PLAN.md).
-3. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
+1. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
+   including Duck960 (PLAN.md). Write a detailed plan for it first.
+2. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
    Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact.

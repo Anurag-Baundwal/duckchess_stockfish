@@ -169,14 +169,14 @@ ExtMove* MovePicker::generate_and_score() {
             m.value = PieceValue[pos.piece_on(m.to_sq())] - type_of(pos.moved_piece(m));
 
         else if constexpr (Type == QUIETS)
-            m.value = (*mainHistory)[us][m.raw()];
+            m.value = (*mainHistory)[us][m.chess_raw()];
 
         else  // Type == EVASIONS
         {
             if (pos.capture_stage(m))
                 m.value = PieceValue[pos.piece_on(m.to_sq())] + (1 << 28);
             else
-                m.value = (*mainHistory)[us][m.raw()];
+                m.value = (*mainHistory)[us][m.chess_raw()];
         }
     }
     return it;

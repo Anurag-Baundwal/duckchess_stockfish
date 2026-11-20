@@ -32,16 +32,18 @@
 namespace Stockfish {
 
 
-// TTEntry struct is the 10 bytes transposition table entry, defined as:
+// TTEntry struct is the 12 bytes transposition table entry, defined as:
 //
-// key        16 bit
 // depth       8 bit
 // pv node     1 bit
 // bound type  2 bit
 // generation  5 bit
-// move       16 bit
+// (padding   16 bit)
+// move       32 bit
 // value      16 bit
 // evaluation 16 bit
+//
+// The low bits of the key are kept in the cluster, see Cluster below.
 //
 // These fields are in the same order as accessed by TT::probe(), since memory
 // is fastest sequentially. The store order in save() matches this order.
@@ -63,7 +65,7 @@ struct TTEntry {
     // Extract data from the TT entry. We have to convert TT internal bitfields
     // to external types.
     TTData read() const {
-        return TTData{Move(move16),
+        return TTData{Move(move32),
                       Value(value16),
                       Value(eval16),
                       Depth(DEPTH_NONE + depth8),
@@ -83,7 +85,7 @@ struct TTEntry {
 
     RelaxedAtomic<u8>   depth8;
     RelaxedAtomic<u8>   genBound8;
-    RelaxedAtomic<Move> move16;
+    RelaxedAtomic<Move> move32;
     RelaxedAtomic<i16>  value16;
     RelaxedAtomic<i16>  eval16;
 };
@@ -94,12 +96,12 @@ struct TTEntry {
 // divide the size of a cache line for best performance, as the cacheline is
 // prefetched when possible.
 
-static constexpr int ClusterSize = 3;
+static constexpr int ClusterSize = 2;
 static constexpr int KeyBits     = 21;
 
 struct Cluster {
-    // keys contains the low 21 bits of the Zobrist keys of the 3 TT entries in this cluster,
-    // packed together into 63 bits of an u64
+    // keys contains the low 21 bits of the Zobrist keys of the 2 TT entries in this cluster,
+    // packed together into 42 bits of an u64
     RelaxedAtomic<u64> keys;
     TTEntry            entry[ClusterSize];
 };
@@ -119,7 +121,7 @@ void          TTWriter::write(
 
     // Preserve the old ttmove if we don't have a new one
     if (m || (k & MASK21) != key21)
-        entry.move16 = m;
+        entry.move32 = m;
 
     // Overwrite less valuable entries (cheapest checks first)
     if (b == BOUND_EXACT || (k & MASK21) != key21 || d - DEPTH_NONE + 2 * pv > entry.depth8 - 4
@@ -253,7 +255,7 @@ std::tuple<bool, TTData, TTWriter> TranspositionTable::probe(const Key key) cons
     auto&          tte     = cluster->entry;
     const u64      key21   = key & MASK21;  // Use the low 21 bits as key inside the cluster
 
-    constexpr u64 KeyLsb  = 1ULL | (1ULL << KeyBits) | (1ULL << 2 * KeyBits);
+    constexpr u64 KeyLsb  = 1ULL | (1ULL << KeyBits);
     constexpr u64 KeyMsb  = KeyLsb << 20;
     u64           keys    = cluster->keys;
     const u64     keyXors = (keys ^ (KeyLsb * key21));
