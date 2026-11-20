@@ -35,46 +35,28 @@ enum Stages : i8;
 // new legal move on every call, until there are no moves left, when
 // Move::none() is returned. In order to improve the efficiency of the alpha-beta
 // algorithm, MovePicker attempts to return the moves which are most likely to get
-// a cut-off first.
+// a cut-off first: the TT move, then captures by MVV-LVA, then quiet moves by
+// butterfly history.
 class MovePicker {
 
    public:
     MovePicker(const MovePicker&)            = delete;
     MovePicker& operator=(const MovePicker&) = delete;
-    MovePicker(const Position&,
-               Move,
-               Depth,
-               const ButterflyHistory*,
-               const LowPlyHistory*,
-               const CapturePieceToHistory*,
-               const PieceToHistory**,
-               const SharedHistories*,
-               int);
-    MovePicker(const Position&, Move, int, const CapturePieceToHistory*);
+    MovePicker(const Position&, Move, Depth, const ButterflyHistory*);
     Move next_move();
-    void skip_quiet_moves();
 
    private:
-    template<typename Pred>
-    Move select(Pred);
+    Move select();
     template<GenType T>
     ExtMove* generate_and_score();
 
-    const Position&              pos;
-    const ButterflyHistory*      mainHistory;
-    const LowPlyHistory*         lowPlyHistory;
-    const CapturePieceToHistory* captureHistory;
-    const PieceToHistory**       continuationHistory;
-    const SharedHistories*       sharedHistory;
-    Move                         ttMove;
-    ExtMove *                    cur, *endCur, *endBadCaptures, *endBadMoves;
-    Stages                       stage;
-    Stages                       first_stage;
-    int                          threshold;
-    Depth                        depth;
-    int                          ply;
-    bool                         skipQuiets = false;
-    ExtMove                      moves[MAX_MOVES];
+    const Position&         pos;
+    const ButterflyHistory* mainHistory;
+    Move                    ttMove;
+    ExtMove *               cur, *endCur;
+    Stages                  stage;
+    Stages                  first_stage;
+    ExtMove                 moves[MAX_MOVES];
 };
 
 }  // namespace Stockfish

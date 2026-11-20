@@ -20,32 +20,17 @@
 #define HISTORY_H_INCLUDED
 
 #include <algorithm>
-#include <array>
-#include <atomic>
 #include <cassert>
-#include <cmath>
-#include <cstdint>
 #include <cstdlib>
 #include <limits>
-#include <memory>
 #include <type_traits>  // IWYU pragma: keep
 
 #include "misc.h"
-#include "position.h"
+#include "types.h"
 
 namespace Stockfish {
 
-constexpr int PAWN_HISTORY_BASE_SIZE   = 8192;  // has to be a power of 2
-constexpr int UINT_16_HISTORY_SIZE     = std::numeric_limits<u16>::max() + 1;
-constexpr int CORRHIST_BASE_SIZE       = UINT_16_HISTORY_SIZE;
-constexpr int CORRECTION_HISTORY_LIMIT = 1024;
-constexpr int LOW_PLY_HISTORY_SIZE     = 5;
-
-static_assert((PAWN_HISTORY_BASE_SIZE & (PAWN_HISTORY_BASE_SIZE - 1)) == 0,
-              "PAWN_HISTORY_BASE_SIZE has to be a power of 2");
-
-static_assert((CORRHIST_BASE_SIZE & (CORRHIST_BASE_SIZE - 1)) == 0,
-              "CORRHIST_BASE_SIZE has to be a power of 2");
+constexpr int UINT_16_HISTORY_SIZE = std::numeric_limits<u16>::max() + 1;
 
 // StatsEntry is the container of various numerical statistics. We use a class
 // instead of a naked value to directly call history update operator<<() on
@@ -77,182 +62,14 @@ struct StatsEntry {
     }
 };
 
-enum StatsType {
-    NoCaptures,
-    Captures
-};
-
 template<typename T, int D, usize... Sizes>
 using Stats = MultiArray<StatsEntry<T, D>, Sizes...>;
 
-template<typename T, int D, usize... Sizes>
-using AtomicStats = MultiArray<StatsEntry<T, D, true>, Sizes...>;
-
-// DynStats is a dynamically sized array of Stats, used for thread-shared histories
-// which should scale with the total number of threads. The SizeMultiplier gives
-// the per-thread allocation count of T.
-template<typename T, int SizeMultiplier>
-struct DynStats {
-    explicit DynStats(usize s) {
-        size = s * SizeMultiplier;
-        data = std::make_unique<T[]>(size);
-    }
-    // Sets all values in the range to 0
-    void clear_range(int value, usize threadIdx, usize numThreads) {
-        usize start = u64(threadIdx) * size / numThreads;
-        assert(start < size);
-        usize end = threadIdx + 1 == numThreads ? size : u64(threadIdx + 1) * size / numThreads;
-
-        while (start < end)
-            data[start++].fill(value);
-    }
-    usize get_size() const { return size; }
-    T&    operator[](usize index) {
-        assert(index < size);
-        return data.get()[index];
-    }
-    const T& operator[](usize index) const {
-        assert(index < size);
-        return data.get()[index];
-    }
-
-   private:
-    usize                size;
-    std::unique_ptr<T[]> data;
-};
-
 // ButterflyHistory records how often quiet moves have been successful or unsuccessful
-// during the current search, and is used for reduction and move ordering decisions.
+// during the current search, and is used for move ordering decisions.
 // It uses 2 tables (one for each color) indexed by the move's from and to squares,
 // see https://www.chessprogramming.org/Butterfly_Boards
 using ButterflyHistory = Stats<i16, 7183, COLOR_NB, UINT_16_HISTORY_SIZE>;
-
-// LowPlyHistory is addressed by ply and move's from and to squares, used
-// to improve move ordering near the root
-using LowPlyHistory = Stats<i16, 7183, LOW_PLY_HISTORY_SIZE, UINT_16_HISTORY_SIZE>;
-
-// CapturePieceToHistory is addressed by a move's [piece][to][captured piece type]
-using CapturePieceToHistory = Stats<i16, 10692, PIECE_NB, SQUARE_NB, PIECE_TYPE_NB>;
-
-// PieceToHistory is like ButterflyHistory but is addressed by a move's [piece][to]
-using PieceToHistory = AtomicStats<i16, 30000, PIECE_NB, SQUARE_NB>;
-
-// ContinuationHistory is the combined history of a given pair of moves, usually
-// the current one given a previous one. The nested history table is based on
-// PieceToHistory instead of ButterflyBoards.
-using ContinuationHistory = MultiArray<PieceToHistory, PIECE_NB, SQUARE_NB>;
-
-// PawnHistory is addressed by the pawn structure and a move's [piece][to]
-using PawnHistory = DynStats<AtomicStats<i16, 8192, PIECE_NB, SQUARE_NB>, PAWN_HISTORY_BASE_SIZE>;
-
-// Correction histories record differences between the static evaluation of
-// positions and their search score. It is used to improve the static evaluation
-// used by some search heuristics.
-// see https://www.chessprogramming.org/Static_Evaluation_Correction_History
-enum CorrHistType {
-    PieceTo,       // By [piece][to] move
-    Continuation,  // Combined history of move pairs
-};
-
-template<typename T, int D>
-struct CorrectionBundle {
-    StatsEntry<T, D, true> pawn;
-    StatsEntry<T, D, true> minor;
-    StatsEntry<T, D, true> nonPawnWhite;
-    StatsEntry<T, D, true> nonPawnBlack;
-
-    void operator=(T val) {
-        pawn         = val;
-        minor        = val;
-        nonPawnWhite = val;
-        nonPawnBlack = val;
-    }
-};
-
-namespace Detail {
-
-template<CorrHistType>
-struct CorrHistTypedef;
-
-template<>
-struct CorrHistTypedef<PieceTo> {
-    using type = Stats<i16, CORRECTION_HISTORY_LIMIT, PIECE_NB, SQUARE_NB>;
-};
-
-template<>
-struct CorrHistTypedef<Continuation> {
-    using type = MultiArray<CorrHistTypedef<PieceTo>::type, PIECE_NB, SQUARE_NB>;
-};
-
-}
-
-using UnifiedCorrectionHistory =
-  DynStats<MultiArray<CorrectionBundle<i16, CORRECTION_HISTORY_LIMIT>, COLOR_NB>,
-           CORRHIST_BASE_SIZE>;
-
-template<CorrHistType T>
-using CorrectionHistory = typename Detail::CorrHistTypedef<T>::type;
-
-using TTMoveHistory = StatsEntry<i16, 8192>;
-
-struct ContinuationHistoryBlock {
-    ContinuationHistory table[2][2];
-};
-
-// Set of histories shared between all threads. The passed size must be
-// a power of two to make the indexing more efficient.
-struct SharedHistories {
-    SharedHistories(usize threadCount) :
-        correctionHistory(threadCount),
-        continuationHistoryBlock(std::make_unique<ContinuationHistoryBlock>()),
-        pawnHistory(threadCount) {
-        assert((threadCount & (threadCount - 1)) == 0 && threadCount != 0);
-        sizeMinus1         = correctionHistory.get_size() - 1;
-        pawnHistSizeMinus1 = pawnHistory.get_size() - 1;
-    }
-
-    auto& continuationHistory() { return continuationHistoryBlock->table; }
-
-    usize get_size() const { return sizeMinus1 + 1; }
-
-    auto& pawn_entry(const Position& pos) {
-        return pawnHistory[pos.pawn_key() & pawnHistSizeMinus1];
-    }
-    const auto& pawn_entry(const Position& pos) const {
-        return pawnHistory[pos.pawn_key() & pawnHistSizeMinus1];
-    }
-
-    auto& pawn_correction_entry(const Position& pos) {
-        return correctionHistory[pos.pawn_key() & sizeMinus1];
-    }
-    const auto& pawn_correction_entry(const Position& pos) const {
-        return correctionHistory[pos.pawn_key() & sizeMinus1];
-    }
-
-    auto& minor_piece_correction_entry(const Position& pos) {
-        return correctionHistory[pos.minor_piece_key() & sizeMinus1];
-    }
-    const auto& minor_piece_correction_entry(const Position& pos) const {
-        return correctionHistory[pos.minor_piece_key() & sizeMinus1];
-    }
-
-    template<Color c>
-    auto& nonpawn_correction_entry(const Position& pos) {
-        return correctionHistory[pos.non_pawn_key(c) & sizeMinus1];
-    }
-    template<Color c>
-    const auto& nonpawn_correction_entry(const Position& pos) const {
-        return correctionHistory[pos.non_pawn_key(c) & sizeMinus1];
-    }
-
-    UnifiedCorrectionHistory                  correctionHistory;
-    std::unique_ptr<ContinuationHistoryBlock> continuationHistoryBlock;
-    PawnHistory                               pawnHistory;
-
-
-   private:
-    usize sizeMinus1, pawnHistSizeMinus1;
-};
 
 }  // namespace Stockfish
 
