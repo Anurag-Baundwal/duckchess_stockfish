@@ -986,11 +986,11 @@ void update_all_stats(const Position& pos,
     Color us    = pos.side_to_move();
     int   bonus = std::min(133 * depth - 81, 1487);
 
-    workerThread.mainHistory[us][bestMove.raw()] << bonus;
+    workerThread.mainHistory[us][bestMove.chess_raw()] << bonus;
 
     // Decrease stats for all non-best quiet moves
     for (Move move : quietsSearched)
-        workerThread.mainHistory[us][move.raw()] << -bonus;
+        workerThread.mainHistory[us][move.chess_raw()] << -bonus;
 }
 }
 

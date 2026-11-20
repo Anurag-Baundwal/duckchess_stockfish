@@ -410,12 +410,14 @@ enum MoveType : u16 {
     CASTLING   = 3 << 14
 };
 
-// A move needs 16 bits to be stored
+// A move is stored in 32 bits. The low 16 bits are the chess move, as in
+// Stockfish, and bits 16-21 hold the square the duck is moved to:
 //
 // bit  0- 5: destination square (from 0 to 63)
 // bit  6-11: origin square (from 0 to 63)
 // bit 12-13: promotion piece type - 2 (from KNIGHT-2 to QUEEN-2)
 // bit 14-15: special move flag: promotion (1), en passant (2), castling (3)
+// bit 16-21: duck square (from 0 to 63), not used yet
 // NOTE: en passant bit is set only when a pawn can be captured
 //
 // Special cases are Move::none() and Move::null(). We can sneak these in because
@@ -425,7 +427,7 @@ enum MoveType : u16 {
 class Move {
    public:
     Move() = default;
-    constexpr explicit Move(u16 d) :
+    constexpr explicit Move(u32 d) :
         data(d) {}
 
     constexpr Move(Square from, Square to) :
@@ -446,6 +448,11 @@ class Move {
         return Square(data & 0x3F);
     }
 
+    constexpr Square duck_sq() const {
+        assert(is_ok());
+        return Square((data >> DuckSqShift) & 0x3F);
+    }
+
     constexpr MoveType type_of() const { return MoveType(data & (3 << 14)); }
 
     constexpr PieceType promotion_type() const { return PieceType(((data >> 12) & 3) + KNIGHT); }
@@ -460,7 +467,11 @@ class Move {
 
     constexpr explicit operator bool() const { return data != 0; }
 
-    constexpr u16 raw() const { return data; }
+    constexpr u32 raw() const { return data; }
+
+    // The chess part of the move: the low 16 bits, without the duck square.
+    // Histories are indexed by it, so their size does not depend on the duck.
+    constexpr u16 chess_raw() const { return u16(data); }
 
     struct MoveHash {
         usize operator()(const Move& m) const { return make_key(m.data); }
@@ -468,9 +479,10 @@ class Move {
 
     static constexpr int FromSqShift = 6;
     static constexpr int ToSqShift   = 0;
+    static constexpr int DuckSqShift = 16;
 
    protected:
-    u16 data;
+    u32 data;
 };
 
 }  // namespace Stockfish
