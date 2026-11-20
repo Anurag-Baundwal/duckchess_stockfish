@@ -36,8 +36,6 @@
 
 namespace Stockfish {
 
-struct SharedHistories;
-
 // StateInfo struct stores information needed to restore a Position object to
 // its previous state when we retract a move. Whenever a move is made on the
 // board (by calling Position::do_move), a StateInfo object must be passed.
@@ -143,8 +141,7 @@ class Position {
 
     // Doing and undoing moves
     void do_move(Move m, StateInfo& newSt);
-    void
-    do_move(Move m, StateInfo& newSt, bool givesCheck, const SharedHistories* worker = nullptr);
+    void do_move(Move m, StateInfo& newSt, bool givesCheck);
     void undo_move(Move m);
     void do_null_move(StateInfo& newSt);
     void undo_null_move();

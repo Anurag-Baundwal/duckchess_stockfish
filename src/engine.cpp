@@ -164,7 +164,7 @@ std::optional<PositionSetError> Engine::set_position(const std::string&         
 
 void Engine::resize_threads() {
     threads.wait_for_search_finished();
-    threads.set({options, threads, tt, sharedHists}, updateContext);
+    threads.set({options, threads, tt}, updateContext);
 
     // Reallocate the hash with the new threadpool size
     set_tt_size(options["Hash"]);

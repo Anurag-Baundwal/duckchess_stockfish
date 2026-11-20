@@ -21,7 +21,7 @@ Status
 [x] 1.2  remove Syzygy
 [x] 1.3  HCE replaces NNUE (SF11 material + PSQT)
 [x] 1.4  remove NUMA, large pages, shared memory
-[ ] 1.5  minimal chess search
+[x] 1.5  minimal chess search
 [ ] 1.6  32-bit Move + TT
 [ ] 2.1-2.6  duck rules, movegen, UCI, perft (standard and Duck960)
 [ ] 2.7  perft suite matches Fairy-Stockfish (n/n positions)
@@ -179,7 +179,7 @@ Journal
     adds Duck960 to Phases 2-4 and a Phase 5 for OpenBench, which must keep
     4PC Teams and FFA working unchanged.
 
-2026-11-21  1.4  Remove NUMA, large pages and shared memory   (this commit)
+2026-11-21  1.4  Remove NUMA, large pages and shared memory        e813702a
   - Deleted numa.h, shm.h and shm_unix.h, the NumaPolicy option, thread
     binding and NUMA replication. ThreadPool::set() creates one
     SharedHistories for all threads, sized by the thread count as before
@@ -206,11 +206,52 @@ Journal
   - Unused since 1.3 and kept for a later duck NNUE: src/incbin, and
     memory.h's AlignedPtr, make_unique_aligned, align_ptr_up and load_as.
 
+2026-11-21  1.5  Minimal chess search                         (this commit)
+  - search() is plain PVS: TT probe and cutoff, mate distance pruning, then
+    every move; at PV nodes the first move gets the full window and the
+    rest a null window, re-searched with the full window when they beat
+    alpha. qsearch() keeps stand pat and searches captures, or evasions
+    when in check. Stockfish's step numbers stay, with gaps.
+  - Removed, as PLAN.md lists: aspiration windows, razoring, futility (RFP,
+    parent node and qsearch), null move, IIR, ProbCut, singular and other
+    extensions, LMP, LMR, SEE pruning, correction histories, and the
+    continuation, pawn, low-ply, capture and TT-move histories. Also the
+    tweaks that only fed them: cutNode, ttPv, optimism, fail-firm
+    dampening, the depth reduction after alpha raises, the prior
+    countermove bonuses and the history updates on TT cutoffs.
+  - Kept: the iterative-deepening loop with its time management (including
+    searchAgainCounter), MultiPV with the aborted-loss and forgotten-mate
+    guards, Skill, upcoming_repetition, the rule50 < 96 guard on TT cutoffs,
+    and the butterfly history (init -5, aged by 729/1024 per search). The
+    best quiet move gets upstream's base bonus min(133 * depth - 81, 1487),
+    the quiets searched before it the same as a malus.
+  - MovePicker: TT move, captures by MVV-LVA, quiets by butterfly history,
+    all fully sorted; evasions put captures first. qsearch skips
+    non-captures once a move has a non-losing score, as upstream does, so a
+    quiet TT move is not searched there.
+  - The SharedHistories plumbing of 1.4 went with the histories (Engine,
+    ThreadPool::set, the Worker and Position::do_move's prefetch argument).
+    Search::Stack keeps pv, ply, currentMove (written but unread until a
+    history that uses it returns) and inCheck.
+  - Default bench depth 13 -> 5. Without pruning, depth 8 already takes
+    35 s, and bench position 37 (k7/2n1n3/..., minor pieces everywhere)
+    explodes in qsearch without SEE pruning: 8.7M nodes at depth 1, 90% of
+    the bench at depth 5. The positions stay as upstream until 3.3 replaces
+    them with duck positions.
+  - Time management still assumes Stockfish's branching factor, so an
+    iteration can overshoot (1.3 s on move 2 at 10+0.1).
+  - Verified: Bench 27588136 (two runs; also the debug build with
+    assertions and the NDK build on one tablet core); clean build without
+    warnings; chess perft 20/20 OK; the mate in 2 Nf6+ gxf6 Bxf7#; KQ vs K
+    `go mate 12` finds mate in 9; stalemate and mated roots give bestmove
+    (none); MultiPV 3, searchmoves, Threads 4 and 8, a clock search.
+    Startpos depth 9: 3.6M nodes in 0.4 s; bench 7.2M nps on this laptop.
+
 
 Next steps
 ----------
-1. 1.5  Minimal chess search.  2. 1.6  32-bit Move + 2-entry TT clusters.
-3. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
+1. 1.6  32-bit Move + 2-entry TT clusters.
+2. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
    including Duck960 (PLAN.md).
-4. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
+3. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
    Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact.

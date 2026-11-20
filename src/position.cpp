@@ -32,7 +32,6 @@
 #include <utility>
 
 #include "bitboard.h"
-#include "history.h"
 #include "misc.h"
 #include "movegen.h"
 #include "uci.h"
@@ -768,9 +767,7 @@ bool Position::gives_check(Move m) const {
 
 // Makes a move, and saves all information necessary
 // to a StateInfo object. The move is assumed to be legal.
-// If a pointer to the shared histories is passed, their entries for the
-// new position will be prefetched.
-void Position::do_move(Move m, StateInfo& newSt, bool givesCheck, const SharedHistories* history) {
+void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
 
     assert(m.is_ok());
     assert(&newSt != st);
@@ -936,15 +933,6 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck, const SharedHi
 
     // Update the key with the final value
     st->key = k;
-
-    if (history)
-    {
-        prefetch(&history->pawn_entry(*this)[pc][to]);
-        prefetch(&history->pawn_correction_entry(*this));
-        prefetch(&history->minor_piece_correction_entry(*this));
-        prefetch(&history->nonpawn_correction_entry<WHITE>(*this));
-        prefetch(&history->nonpawn_correction_entry<BLACK>(*this));
-    }
 
     // Move the piece. The tricky Chess960 castling is handled earlier
     if (m.type_of() != CASTLING)

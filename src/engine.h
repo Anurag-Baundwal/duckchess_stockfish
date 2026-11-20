@@ -29,7 +29,6 @@
 #include <vector>
 
 #include "misc.h"
-#include "history.h"
 #include "position.h"
 #include "search.h"
 #include "thread.h"
@@ -107,7 +106,6 @@ class Engine {
     TranspositionTable tt;
 
     Search::SearchManager::UpdateContext updateContext;
-    std::optional<SharedHistories>       sharedHists;
 };
 
 }  // namespace Stockfish

@@ -25,7 +25,6 @@
 #include <cassert>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -107,22 +106,10 @@ struct PVMoves {
 // shallower and deeper in the tree during the search. Each search thread has
 // its own array of Stack objects, indexed by the current ply.
 struct Stack {
-    PVMoves*                    pv;
-    PieceToHistory*             continuationHistory;
-    CorrectionHistory<PieceTo>* continuationCorrectionHistory;
-    int                         ply;
-    Move                        currentMove;
-    Move                        excludedMove;
-    Value                       staticEval;
-    int                         statScore;
-    int                         moveCount;
-    bool                        inCheck;
-    bool                        ttPv;
-    bool                        ttHit;
-    bool                        followPV;
-    int                         cutoffCnt;
-    int                         reduction;
-    int                         priorNMPFailHigh;
+    PVMoves* pv;
+    int      ply;
+    Move     currentMove;
+    bool     inCheck;
 };
 
 
@@ -144,14 +131,13 @@ struct RootMove {
         return m.score != score ? m.score < score : m.previousScore < previousScore;
     }
 
-    u64         effort           = 0;
-    Value       score            = -VALUE_INFINITE;
-    Value       previousScore    = -VALUE_INFINITE;
-    Value       averageScore     = -VALUE_INFINITE;
-    Value       meanSquaredScore = -VALUE_INFINITE * VALUE_INFINITE;
-    Value       uciScore         = -VALUE_INFINITE;
-    bool        inexactLower     = false;  // By default root scores are exact, unless flagged as a
-    bool        inexactUpper     = false;  // one-sided bound here. See also `enum Bound` in types.h
+    u64         effort        = 0;
+    Value       score         = -VALUE_INFINITE;
+    Value       previousScore = -VALUE_INFINITE;
+    Value       averageScore  = -VALUE_INFINITE;
+    Value       uciScore      = -VALUE_INFINITE;
+    bool        inexactLower  = false;  // By default root scores are exact, unless flagged as a
+    bool        inexactUpper  = false;  // one-sided bound here. See also `enum Bound` in types.h
     bool        previousScoreExact = false;
     int         selDepth           = 0;
     RootPVMoves pv, previousPV;
@@ -184,19 +170,16 @@ struct LimitsType {
 // The UCI stores the uci options, thread pool, and transposition table.
 // This struct is used to easily forward data to the Search::Worker class.
 struct SharedState {
-    SharedState(const OptionsMap&               optionsMap,
-                ThreadPool&                     threadPool,
-                TranspositionTable&             transpositionTable,
-                std::optional<SharedHistories>& sharedHists) :
+    SharedState(const OptionsMap&   optionsMap,
+                ThreadPool&         threadPool,
+                TranspositionTable& transpositionTable) :
         options(optionsMap),
         threads(threadPool),
-        tt(transpositionTable),
-        sharedHistories(sharedHists) {}
+        tt(transpositionTable) {}
 
-    const OptionsMap&               options;
-    ThreadPool&                     threads;
-    TranspositionTable&             tt;
-    std::optional<SharedHistories>& sharedHistories;
+    const OptionsMap&   options;
+    ThreadPool&         threads;
+    TranspositionTable& tt;
 };
 
 class Worker;
@@ -300,7 +283,7 @@ class SearchManager {
 // of the search history, and storing data required for the search.
 class Worker {
    public:
-    Worker(SharedState&, std::unique_ptr<SearchManager>, usize, usize);
+    Worker(SharedState&, std::unique_ptr<SearchManager>, usize);
 
     // Reset histories, usually before a new game.
     void clear();
@@ -313,39 +296,21 @@ class Worker {
 
     // Public because they need to be updatable by the stats
     ButterflyHistory mainHistory;
-    LowPlyHistory    lowPlyHistory;
-
-    CapturePieceToHistory           captureHistory;
-    CorrectionHistory<Continuation> continuationCorrectionHistory;
-
-    TTMoveHistory    ttMoveHistory;
-    SharedHistories& sharedHistory;
-    ContinuationHistory (&continuationHistory)[2][2];
 
    private:
     bool iterative_deepening();
 
-    void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);
-    void do_move(Position&    pos,
-                 const Move   move,
-                 StateInfo&   st,
-                 const bool   givesCheck,
-                 const bool   capture,
-                 Stack* const ss);
-    void do_null_move(Position& pos, StateInfo& st, Stack* const ss);
+    void
+    do_move(Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss);
     void undo_move(Position& pos, const Move move);
-    void undo_null_move(Position& pos);
 
     // This is the main search function, for both PV and non-PV nodes
     template<NodeType nodeType>
-    Value
-    search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, const bool cutNode);
+    Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth);
 
     // Quiescence search function, which is called by the main search
     template<NodeType nodeType>
     Value qsearch(Position& pos, Stack* ss, Value alpha, Value beta);
-
-    int reduction(bool i, Depth d, int mn) const;
 
     // Pointer to the search manager, only allowed to be called by the main thread
     SearchManager* main_manager() const {
@@ -362,19 +327,14 @@ class Worker {
 
     usize              pvIdx, pvLast;
     RelaxedAtomic<u64> nodes, bestMoveChanges;
-    int                selDepth, nmpMinPly;
-
-    Value optimism[COLOR_NB];
+    int                selDepth;
 
     Position  rootPos;
     StateInfo rootState;
     RootMoves rootMoves;
     Depth     rootDepth;
-    bool      seekMate = false;
 
-    PVMoves lastIterationIdxPV;
-
-    usize threadIdx, numThreads;
+    usize threadIdx;
 
     // The main thread has a SearchManager, the others have a nullptr
     std::unique_ptr<SearchManager> manager;
@@ -385,11 +345,6 @@ class Worker {
 
     friend class Stockfish::ThreadPool;
     friend class SearchManager;
-};
-
-struct ConthistBonus {
-    int index;
-    int weight;
 };
 
 

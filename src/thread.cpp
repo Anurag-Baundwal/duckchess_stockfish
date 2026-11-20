@@ -30,7 +30,6 @@
 #include <utility>
 
 #include "bitboard.h"
-#include "history.h"
 #include "movegen.h"
 #include "search.h"
 #include "timeman.h"
@@ -44,9 +43,8 @@ namespace Stockfish {
 // in idle_loop(). Note that 'searching' and 'exit' should be already set.
 Thread::Thread(Search::SharedState&                   sharedState,
                std::unique_ptr<Search::SearchManager> sm,
-               usize                                  n,
-               usize                                  numThreads) :
-    worker(std::make_unique<Search::Worker>(sharedState, std::move(sm), n, numThreads)),
+               usize                                  n) :
+    worker(std::make_unique<Search::Worker>(sharedState, std::move(sm), n)),
     idx(n),
     stdThread(
       create_native_thread(NativeThreadOptions{}.setLargeStack(true), &Thread::idle_loop, this)) {
@@ -130,12 +128,9 @@ Search::SearchManager* ThreadPool::main_manager() { return main_thread()->worker
 
 u64 ThreadPool::nodes_searched() const { return accumulate(&Search::Worker::nodes); }
 
-static usize next_power_of_two(u64 count) { return count > 1 ? (2ULL << msb(count - 1)) : 1; }
-
 // Creates/destroys threads to match the requested number.
 // Created and launched threads will immediately go to sleep in idle_loop.
-// Upon resizing, threads are recreated, and so are the shared histories,
-// whose size depends on the number of threads.
+// Upon resizing, threads are recreated.
 void ThreadPool::set(Search::SharedState                         sharedState,
                      const Search::SearchManager::UpdateContext& updateContext) {
 
@@ -150,8 +145,6 @@ void ThreadPool::set(Search::SharedState                         sharedState,
 
     if (requested > 0)  // create new thread(s)
     {
-        sharedState.sharedHistories.emplace(next_power_of_two(requested));
-
         while (threads.size() < requested)
         {
             const usize threadId = threads.size();
@@ -159,7 +152,7 @@ void ThreadPool::set(Search::SharedState                         sharedState,
               threadId == 0 ? std::make_unique<Search::SearchManager>(updateContext) : nullptr;
 
             threads.emplace_back(
-              std::make_unique<Thread>(sharedState, std::move(manager), threadId, requested));
+              std::make_unique<Thread>(sharedState, std::move(manager), threadId));
         }
 
         clear();
@@ -245,7 +238,6 @@ void ThreadPool::start_thinking(Position& pos, StateListPtr& states, Search::Lim
         th->run_custom_job([&]() {
             th->worker->limits = limits;
             th->worker->nodes = th->worker->bestMoveChanges = 0;
-            th->worker->nmpMinPly                           = 0;
             th->worker->rootDepth                           = 0;
             th->worker->rootMoves                           = rootMoves;
             th->worker->rootPos.set(pos.fen(), pos.is_chess960(), &th->worker->rootState);

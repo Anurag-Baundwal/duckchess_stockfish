@@ -44,7 +44,7 @@ using Value = int;
 // the search is finished, it goes back to idle_loop() waiting for a new signal.
 class Thread {
    public:
-    Thread(Search::SharedState&, std::unique_ptr<Search::SearchManager>, usize, usize);
+    Thread(Search::SharedState&, std::unique_ptr<Search::SearchManager>, usize);
     virtual ~Thread();
 
     void idle_loop();
