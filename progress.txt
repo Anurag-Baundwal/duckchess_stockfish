@@ -26,7 +26,7 @@ Status
 [x] 2.1  duck perft suite (80 positions, counts from wakwak)
 [x] 2.2  the duck on the board (no functional change)
 [x] 2.3  play duck chess: the duck perft suite passes
-[ ] 3    duck bench
+[x] 3    duck bench
 [ ] 4    fastchess smoke test (duck960 and duck)
 [ ] 5    OpenBench: duck variant next to Teams and FFA
 [ ] 6    improvements, one SPRT each
@@ -50,6 +50,8 @@ wakwak (duck perft reference), with Rust 1.99 from rustup:
 Duck perft: python tests/duck_perft_check.py <engine> [--wakwak <wakwak.exe>]
   [--max-depth N]; python tests/gen_duck_perft.py <wakwak.exe> recomputes the
   counts in tests/duck_perft.epd.
+Bench positions: python tests/gen_duck_bench.py <wakwak.exe> prints the
+  list in src/benchmark.cpp, the same on every run (70 s).
 
 
 Journal
@@ -331,7 +333,7 @@ Journal
     double push, on d6 it cancels en passant; a king in check does not step
     onto it.
 
-2026-11-21  2.3  Play duck chess                              (this commit)
+2026-11-21  2.3  Play duck chess                                   b0860998
   - The rules are PLAN.md's, as fastchess's DuckPosition and wakwak have
     them. There is no check: movegen lost pins, evasions and king safety
     (the king may step onto attacked squares, take the other king, and
@@ -379,11 +381,32 @@ Journal
     lists with ducks parse, and a duck on the move's own destination is
     refused; Duck960 castling e1h1,h1b1; Threads 4 with MultiPV 2.
 
+2026-11-21  3    Duck bench                                   (this commit)
+  - The 49 chess positions gave way to 31 duck positions, all made by
+    wakwak with tests/gen_duck_bench.py (seed 20261121): the start
+    position, then for each kind, standard and then Duck960 between
+    UCI_Chess960 settings, 3 genfens openings (8 or 9 random plies, scored
+    within +-1000 by wakwak at 1000 nodes) and the positions after plies
+    24, 56 and 96 of 4 more openings, which wakwak played on at 20000
+    nodes a move. A position where the side to move can take a king would
+    be left out; none came up. All 8 games reached ply 96.
+  - Depth 3 stays the default: 2.0 s. Depth 4 takes 17.6 s and depth 5
+    did not finish in 5 minutes. None of the positions explodes in
+    qsearch the way chess position 37 did: the heaviest is 16% of the
+    bench.
+  - speedtest keeps Stockfish's chess games. They are FENs without a
+    duck, which are legal duck positions.
+  - Verified: Bench 43908424 (two runs; also the debug build with
+    assertions and the NDK build on the tablet, two runs); bench with 8
+    threads at depth 4, and with 4 threads under assertions.
+
 
 Next steps
 ----------
-1. 3 Duck bench: positions from wakwak's genfens, standard and DFRC, at a
-   depth that takes a few seconds (PLAN.md).
-2. Phase 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
-   Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact; then
-   Phase 6, one SPRT per improvement.
+1. 4 Fastchess smoke test: Silverrzz/fastchess cfa3671a44, 100+ games
+   against itself, wakwak and fsf-duck.exe, duck960 with the DFRC book
+   and duck from the start position; no illegal moves, crashes or
+   timeouts (PLAN.md).
+2. Phase 5: OpenBench with wakwak's test setup (Duck960, Duck_DFRC.epd,
+   Silverrzz/fastchess), keeping Teams and FFA intact; then Phase 6, one
+   SPRT per improvement.
