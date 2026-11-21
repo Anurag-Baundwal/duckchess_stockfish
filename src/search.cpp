@@ -220,6 +220,9 @@ bool Search::Worker::iterative_deepening() {
     Stack  stack[MAX_PLY + 10] = {};
     Stack* ss                  = stack + 7;
 
+    for (int i = 7; i > 0; --i)
+        (ss - i)->staticEval = VALUE_NONE;
+
     for (int i = 0; i <= MAX_PLY + 2; ++i)
         (ss + i)->ply = i;
 
@@ -533,8 +536,9 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     Key   posKey;
     Move  move, bestMove;
-    Value bestValue, value;
-    bool  capture;
+    Value bestValue, value, eval;
+    bool  improving, opponentWorsening;
+    bool  capture, ttCapture;
 
     SearchedList quietsSearched;
     Bitboard     ducksSearched = 0;
@@ -582,6 +586,34 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     ttData.move  = rootNode ? rootMoves[pvIdx].pv[0] : ttHit ? ttData.move : Move::none();
     ttData.value = ttHit ? value_from_tt(ttData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
+    ttCapture    = ttData.move && pos.capture_stage(ttData.move);
+
+    // Step 5. Static evaluation of the position
+    if (ttHit)
+    {
+        // Never assume anything about values stored in TT
+        ss->staticEval = eval = ttData.eval;
+        if (!is_valid(eval))
+            ss->staticEval = eval = evaluate(pos);
+
+        // ttValue can be used as a better position evaluation
+        if (is_valid(ttData.value)
+            && (ttData.bound & (ttData.value > eval ? BOUND_LOWER : BOUND_UPPER)))
+            eval = ttData.value;
+    }
+    else
+    {
+        ss->staticEval = eval = evaluate(pos);
+        ttWriter.write(posKey, VALUE_NONE, PvNode, BOUND_NONE, DEPTH_UNSEARCHED, Move::none(),
+                       ss->staticEval, tt.generation());
+    }
+
+    // Set up the improving flag, which is true if the current static evaluation
+    // is bigger than the previous static evaluation at our turn, and is false
+    // otherwise. Similarly, opponentWorsening is true if our static evaluation
+    // is better for us than at the last ply.
+    improving         = ss->staticEval > (ss - 2)->staticEval;
+    opponentWorsening = ss->staticEval > -(ss - 1)->staticEval;
 
     // Step 6. At non-PV nodes we check for an early TT cutoff. Note that we
     //         always check the validity of the TT value because of access races.
@@ -593,6 +625,23 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     {
         ss->reply = ttData.move;
         return ttData.value;
+    }
+
+    // Step 9. Futility pruning: child node (reverse futility pruning). If the
+    // static evaluation is so far above beta that even a pessimistic estimate
+    // stays above it, assume the search would fail high too and return. As in
+    // Stockfish, with wakwak's depth limit for duck chess.
+    if (!PvNode && depth <= 8 && eval >= beta && (!ttData.move || ttCapture) && !is_loss(beta)
+        && !is_win(eval))
+    {
+        Value futilityMult = std::min(45 + depth * 4, 85);
+        futilityMult -= 20 * !ttHit;
+
+        Value futilityMargin =
+          futilityMult * depth - (2789 * improving + 335 * opponentWorsening) * futilityMult / 1024;
+
+        if (eval - futilityMargin >= beta)
+            return (661 * beta + 363 * eval) / 1024;
     }
 
     MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
@@ -817,15 +866,14 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     else if (bestMove)
         update_all_stats(pos, *this, bestMove, quietsSearched, ducksSearched, depth);
 
-    // Step 24. Write gathered information in transposition table. The main
-    // search does not compute a static evaluation, so none is saved.
+    // Step 24. Write gathered information in transposition table
     if (!(rootNode && pvIdx))
         ttWriter.write(posKey, value_to_tt(bestValue, ss->ply), PvNode,
                        bestValue >= beta    ? BOUND_LOWER
                        : PvNode && bestMove ? BOUND_EXACT
                                             : BOUND_UPPER,
                        moveCount != 0 ? depth : std::min(MAX_PLY - 1, depth + 6), bestMove,
-                       VALUE_NONE, tt.generation());
+                       ss->staticEval, tt.generation());
 
     // The search is now complete
     assert(-VALUE_INFINITE < bestValue && bestValue < VALUE_INFINITE);
