@@ -28,8 +28,8 @@ Status
 [x] 2.3  play duck chess: the duck perft suite passes
 [x] 3    duck bench
 [x] 4    fastchess smoke test (duck960 and duck)
-[ ] 5    OpenBench: duck variant next to Teams and FFA
-[ ] 6    improvements, one SPRT each
+[x] 5    OpenBench: duck variant next to Teams and FFA
+[ ] 6    improvements, one SPRT each (in progress)
 
 
 Quick reference
@@ -459,7 +459,7 @@ Journal
     OpenBench gives fastchess timemargin=250, so this won't add time
     losses to SPRTs; fixing it is the first Phase 6 candidate.
 
-2026-11-21  5    OpenBench, not deployed yet                  (this commit)
+2026-11-21  5    OpenBench branch, not deployed yet                a7ec2e86
   - Branch "duck" of the OpenBench fork (github.com/Anurag-Baundwal/
     OpenBench), two commits on master 6e4a465:
     f93869e  server: EngineConfig.variant and Test.variant (migration
@@ -485,10 +485,60 @@ Journal
     first duck Workload on each downloads the 121 MB book and builds
     fastchess (about a minute here).
 
+2026-11-21  5    OpenBench deployed                                (no commit)
+  - With the user's go-ahead: "duck" merged into the fork's master and
+    deployed (pull, migrate, import_engines, reload). Follow-ups, each
+    deployed the same way:
+    dee7400  variant tests play at their nominal time control: no NPS
+             scaling while the engine's speed keeps changing (Teams tests
+             stay scaled);
+    c07b778  client 71: on Android, fastchess links with LDFLAGS=-pthread
+             (Termux's libc++ has no -lstdc++fs);
+    aa11f08  client 72: on Android, fastchess builds with NATIVE= (its
+             -march=native build died with SIGILL on the tablet) into
+             Runners/<name>-<ref>-android/;
+    63f09bf  presets: bounds [0, 3] (non-regression [-3, 0]) instead of
+             wakwak's [0, 4.20], confidence [0.20, 0.05], for Teams too.
+  - Workers: the laptop (6 threads, x86-64-avxvnni) and the tablet (6
+    threads, armv8-dotprod, Snapdragon SM7675 in Termux).
+  - Pipeline checks, dev = base = master, 8+0.08: test 175 on x86 (200
+    games, -29 +- 43) and test 176 on ARM (200 games, +5 +- 42), no
+    crashes, no time losses, no illegal moves. The ARM build needed the
+    engine fix below and clients 71/72.
+  - New duck tests go at priority 1 or higher, above the Teams tests.
+
+2026-11-21  -    Fix the build in Termux                           3165aa9f
+  - OpenBench runs make without COMP, so the Makefile's gcc path added
+    -mthumb -march=armv7-a -mfloat-abi=softfp on Android; in Termux, g++ is
+    clang for aarch64 and rejects them. They are now added only for
+    armv7. Reproduced and checked with the NDK's clang and OS=Android.
+    Bench unchanged.
+
+2026-11-21  6    First SPRTs (STC 8+0.08, [0, 3])               (branches)
+  - tm-max-2x-optimum 0a7c6bb7 (test 178, after 177 was stopped for its
+    [0, 4.20] bounds): the maximum time is at most twice the optimum
+    instead of 6.873 times. At 8 s + 0.08 on the bench positions a move
+    takes 678 ms instead of 2085 ms. Bench unchanged.
+  - tm-predict-iteration be5a4906, not tested: not starting an iteration
+    predicted to end after 2x totalTime only took 2085 ms to 1727 ms, and
+    adds nothing on top of the cap.
+  - duck-history ce689ac7 (test 179): duck squares ordered by a [color]
+    [square] history (wakwak PR #42) instead of a1..h8. Bench 36581152.
+  - Checks of what master already has (the user asked whether qsearch and
+    the TT had ever been tested in duck chess):
+    * no-qsearch e5f61504, a test base only: the static eval at depth 0.
+      Test 180 is master vs it.
+    * The TT can't be checked this way: without it the bench doesn't finish
+      in 10 minutes (depth 1 alone takes over 2), and OpenBench gives the
+      bench 60 s. Without a TT move, each node searches every chess move
+      with every duck square.
+
 
 Next steps
 ----------
-1. Phase 5: deploy (above, with the user's go-ahead), then a fixed-games
-   duck test (dev = base) on the real instance while Teams and FFA tests
-   keep running.
-2. Phase 6, one SPRT per improvement, starting with time management.
+1. Watch tests 178, 179 and 180, and the errors page (ARM especially).
+   Merge a passed branch into master with its "Passed STC" block.
+2. Phase 6, one SPRT per improvement: Duck or Die (a move that leaves the
+   opponent able to capture our king loses), king captures ordered first,
+   then late duck pruning and the rest of wakwak's gains, interleaved with
+   Stockfish's search features (RFP, NMP, LMR) in stockfish_4pc's order.
