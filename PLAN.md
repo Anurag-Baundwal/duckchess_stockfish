@@ -190,8 +190,9 @@ wakwak's test setup, from its OpenBench instance (chess.n9x.co, checked
 2026-11-21), which we copy:
 - Variant Duck960, engine options `UCI_Variant=duck UCI_Chess960=true`.
 - Book `Duck_DFRC.epd` = `DFRC_4852_v2.epd.zip` from
-  https://file.ax/DFRC_4852_v2.epd.zip (121 MB zipped, sha256 `54f494a2…`):
-  DFRC start positions without a duck. Silverrzz/wakwak-books (generated duck
+  https://file.ax/DFRC_4852_v2.epd.zip (121 MB zipped, sha256 `54f494a2…` for
+  the 333 MB DFRC_4852_v2.epd inside): 5,030,384 DFRC openings about ten
+  plies in, without a duck. Silverrzz/wakwak-books (generated duck
   books, no license file) is not used by its presets.
 - Match runner: Silverrzz/fastchess `-variant duck960`.
 - Presets: STC 8+0.08 (Hash 16), LTC 40+0.4 (Hash 64); gainers `[0, 4.20]`,
@@ -226,6 +227,9 @@ master on OpenBench before it is merged: gainer bounds for additions,
 non-regression bounds for simplifications, and an LTC for search changes.
 The commit message carries the "Passed STC/LTC" block. Candidates, roughly in
 the order wakwak gained from them (see the analysis file):
+- First, time management: Stockfish's expects each iteration to take about
+  twice the last, ours take about ten times as long, so at 8+0.08 most
+  searches start with under 500 ms on the clock (Phase 4 in progress.txt).
 - Duck square ordering, e.g. a duck history `[color][square]`.
 - Qsearch: a limit on duck squares per capture (wakwak started at 5), Duck or
   Die.

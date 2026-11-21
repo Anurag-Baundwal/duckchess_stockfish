@@ -27,7 +27,7 @@ Status
 [x] 2.2  the duck on the board (no functional change)
 [x] 2.3  play duck chess: the duck perft suite passes
 [x] 3    duck bench
-[ ] 4    fastchess smoke test (duck960 and duck)
+[x] 4    fastchess smoke test (duck960 and duck)
 [ ] 5    OpenBench: duck variant next to Teams and FFA
 [ ] 6    improvements, one SPRT each
 
@@ -50,6 +50,13 @@ wakwak (duck perft reference), with Rust 1.99 from rustup:
 Duck perft: python tests/duck_perft_check.py <engine> [--wakwak <wakwak.exe>]
   [--max-depth N]; python tests/gen_duck_perft.py <wakwak.exe> recomputes the
   counts in tests/duck_perft.epd.
+fastchess: clone github.com/Silverrzz/fastchess, check out cfa3671a44, run
+  `make -j8` from PowerShell with MSYS2 on the Path. Duck games, e.g.
+  fastchess.exe -variant duck960 -engine cmd=<abs path> name=a -engine
+  cmd=<abs path> name=b -each tc=8+0.08 option.Hash=16 -openings
+  file=<book.epd> format=epd order=random -rounds 50 -games 2 -repeat
+  -concurrency 5 -pgnout file=<out.pgn>. Add -log file=<log> level=trace
+  engine=true to see every engine line with timestamps.
 Bench positions: python tests/gen_duck_bench.py <wakwak.exe> prints the
   list in src/benchmark.cpp, the same on every run (70 s).
 
@@ -381,7 +388,7 @@ Journal
     lists with ducks parse, and a duck on the move's own destination is
     refused; Duck960 castling e1h1,h1b1; Threads 4 with MultiPV 2.
 
-2026-11-21  3    Duck bench                                   (this commit)
+2026-11-21  3    Duck bench                                        21c4c19d
   - The 49 chess positions gave way to 31 duck positions, all made by
     wakwak with tests/gen_duck_bench.py (seed 20261121): the start
     position, then for each kind, standard and then Duck960 between
@@ -400,13 +407,68 @@ Journal
     assertions and the NDK build on the tablet, two runs); bench with 8
     threads at depth 4, and with 4 threads under assertions.
 
+2026-11-21  -    Fix setting a combo option                        6762c29e
+  - fastchess sends "setoption name UCI_Variant value duck" before every
+    duck game, and the engine exited with 'Option "duck" was already
+    added!'. A combo option's string lists the default and then each value
+    ("duck var duck"), and Option::operator= adds every word to a
+    temporary OptionsMap, whose add() exits on a duplicate. Upstream has
+    no combo options left, so its copy of this code never runs. Each word
+    is now added once. Bench unchanged.
+
+2026-11-21  -    Check the clock in qsearch too                    315f0946
+  - A game at 8+0.08 was lost on time. As in Stockfish, only search()
+    checked the clock and the stop flag, and an unpruned duck qsearch can
+    run millions of nodes: "go movetime 10" took up to 147 ms on the bench
+    positions, "go movetime 200" up to 317 ms. qsearch now checks both, and
+    returns at once after a stop without touching the TT, the best move or
+    the PV (as search() does). Both movetimes are kept to the millisecond.
+    Bench unchanged.
+  - A deviation from Stockfish, which the user kept (2026-11-21): wakwak
+    checks the clock at the top of its qsearch too, every 1024 nodes.
+    Revisit only by SPRT, once a pruned qsearch makes the trees small.
+
+2026-11-21  4    Fastchess smoke test                         (this commit)
+  - Silverrzz/fastchess cfa3671a44 builds with MSYS2 g++ (`make -j8` in the
+    clone). 8+0.08, Hash 16, concurrency 5 on this laptop, books of 300
+    genfens openings from wakwak (4 or 5 random plies, standard and DFRC),
+    every opening played with both colours:
+
+      match                      games  score   illegal/crash  time losses
+      self, duck960                100   51.0%        0             0
+      self, duck                   100   52.5%        0             0
+      self, duck, start position    20   40.0%        0             0
+      wakwak, duck960              100    0.0%        0             0
+      wakwak, duck                 100    1.0%        0             0
+      fsf-duck, duck960            100   78.0%        0        1 ours, 5 FSF
+      fsf-duck, duck               100   76.5%        0          4 FSF
+      fsf-duck, duck960, logged    100   84.0%        0          5 FSF
+
+    Every game ended by king capture, repetition or the fifty-move rule,
+    as fastchess's own duck rules judged it. The first runs found the two
+    fixes above.
+  - Our one time loss (38 ms over) comes from time management. In the
+    logged rerun, 3873 of our 5325 searches started with under 500 ms on
+    the clock, and 1484 of those used over half of it; the smallest margin
+    was 17 ms. The engine spends seconds on its first moves (Stockfish's
+    time management expects each iteration to take about twice the last,
+    ours take about ten times as long) and then plays on the increment.
+    Measured apart from that: at a 100 ms clock the search returns within
+    35 ms, also with 5 copies running; a 90-ply position command takes
+    3 ms; fastchess saw bestmove a median 0.3 ms after our last info line.
+    OpenBench gives fastchess timemargin=250, so this won't add time
+    losses to SPRTs; fixing it is the first Phase 6 candidate.
+
 
 Next steps
 ----------
-1. 4 Fastchess smoke test: Silverrzz/fastchess cfa3671a44, 100+ games
-   against itself, wakwak and fsf-duck.exe, duck960 with the DFRC book
-   and duck from the start position; no illegal moves, crashes or
-   timeouts (PLAN.md).
-2. Phase 5: OpenBench with wakwak's test setup (Duck960, Duck_DFRC.epd,
-   Silverrzz/fastchess), keeping Teams and FFA intact; then Phase 6, one
-   SPRT per improvement.
+1. Phase 5: OpenBench (PLAN.md). Work in progress, not deployed: branch
+   "duck" of the OpenBench fork, in a clone outside repos7/openbench. The
+   server has EngineConfig/Test.variant (migration 0025, which also adds
+   Duck_DFRC.epd), "variants" in Config/config.json with the pinned
+   fastchess, same-variant checks, and Engines/duckchess_stockfish.json
+   with wakwak's presets; the client (version 70) builds fastchess into
+   Runners/ and plays variant tests with it. Next: a local server and
+   worker running Teams, FFA and duck tests side by side; then deploying
+   needs the user, since every Worker (friends' too) updates to client 70.
+2. Phase 6, one SPRT per improvement, starting with time management.
