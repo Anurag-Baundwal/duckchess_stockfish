@@ -131,7 +131,10 @@ void TimeManagement::init(Search::LimitsType& limits,
                             0.19404 * limits.time[us] / timeLeft)
                  * originalTimeAdjust;
 
-        maxScale = std::min(6.873, maxConstant + ply / 12.352);
+        // At most twice the optimum, not 6.873 times as in chess: a duck chess
+        // iteration can take ten times as long as the one before it, so one
+        // started within the optimum time would often run on to the maximum.
+        maxScale = std::min(2.0, maxConstant + ply / 12.352);
     }
 
     // x moves in y seconds (+ z increment)
