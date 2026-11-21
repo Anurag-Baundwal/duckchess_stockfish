@@ -132,9 +132,11 @@ void partial_insertion_sort(ExtMove* begin, ExtMove* end, int limit) {
 // MovePicker constructor for the main search and for the quiescence search. As
 // arguments, we pass information to decide which class of moves to emit and to
 // help sorting the (presumably) good moves first.
-MovePicker::MovePicker(const Position& p, Move ttm, Depth depth, const ButterflyHistory* mh) :
+MovePicker::MovePicker(
+  const Position& p, Move ttm, Depth depth, const ButterflyHistory* mh, const DuckHistory* dh) :
     pos(p),
     mainHistory(mh),
+    duckHistory(dh),
     ttMove(ttm && p.legal(ttm) ? ttm : Move::none()) {
 
     first_stage = depth > 0 ? CAPTURE : QSEARCH;
@@ -184,16 +186,20 @@ Move MovePicker::next_move() {
 
     while (true)
     {
-        // The duck squares of the current chess move, in square order. This
-        // never returns the TT move, as it was emitted before.
-        while (duckSquares)
-            if (Move m = chessMove.with_duck(pop_lsb(duckSquares)); m != ttMove)
-                return m;
+        // The duck squares of the current chess move, best duck history first.
+        // This never returns the TT move, as it was emitted before.
+        while (duckIdx < SQUARE_NB)
+            if (Square s = duckOrder[duckIdx++]; duckTargets & s)
+                if (Move m = chessMove.with_duck(s); m != ttMove)
+                    return m;
 
         if (!(chessMove = next_chess_move()))
             return Move::none();
 
-        duckSquares = pos.duck_targets(chessMove);
+        // A copy of the order, which the search of this move's children updates
+        duckOrder   = duckHistory->sorted(pos.side_to_move());
+        duckTargets = pos.duck_targets(chessMove);
+        duckIdx     = 0;
     }
 }
 

@@ -36,13 +36,14 @@ enum Stages : i8;
 // Move::none() is returned. In order to improve the efficiency of the alpha-beta
 // algorithm, MovePicker attempts to return the moves which are most likely to get
 // a cut-off first: the TT move, then captures by MVV-LVA, then quiet moves by
-// butterfly history. Each chess move comes with every duck square in turn.
+// butterfly history. Each chess move comes with every duck square in turn, by
+// duck history.
 class MovePicker {
 
    public:
     MovePicker(const MovePicker&)            = delete;
     MovePicker& operator=(const MovePicker&) = delete;
-    MovePicker(const Position&, Move, Depth, const ButterflyHistory*);
+    MovePicker(const Position&, Move, Depth, const ButterflyHistory*, const DuckHistory*);
     Move next_move();
 
    private:
@@ -53,9 +54,12 @@ class MovePicker {
 
     const Position&         pos;
     const ButterflyHistory* mainHistory;
+    const DuckHistory*      duckHistory;
     Move                    ttMove;
-    Move                    chessMove   = Move::none();
-    Bitboard                duckSquares = 0;
+    Move                    chessMove = Move::none();
+    DuckHistory::Order      duckOrder;                // The squares by duck history,
+    Bitboard                duckTargets = 0;          // those of the current chess move,
+    int                     duckIdx     = SQUARE_NB;  // and the next one to look at
     ExtMove *               cur, *endCur;
     Stages                  stage;
     Stages                  first_stage;

@@ -295,6 +295,7 @@ class Worker {
 
     // Public because they need to be updatable by the stats
     ButterflyHistory mainHistory;
+    DuckHistory      duckHistory;
 
    private:
     bool iterative_deepening();
