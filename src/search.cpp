@@ -63,6 +63,7 @@ void  update_all_stats(const Position& pos,
                        Search::Worker& workerThread,
                        Move            bestMove,
                        SearchedList&   quietsSearched,
+                       Bitboard        ducksSearched,
                        Depth           depth);
 
 }  // namespace
@@ -203,6 +204,8 @@ bool Search::Worker::iterative_deepening() {
     for (Color c : {WHITE, BLACK})
         for (int i = 0; i < UINT_16_HISTORY_SIZE; i++)
             mainHistory[c][i] = mainHistory[c][i] * 729 / 1024;
+
+    duckHistory.age(729, 1024);
 
     // Iterative deepening loop until requested to stop or the target depth is reached
     while (rootDepth + 1 < MAX_PLY && !threads.stop
@@ -457,7 +460,10 @@ void Search::Worker::undo_move(Position& pos, const Move move) { pos.undo_move(m
 
 
 // Reset histories, usually before a new game
-void Search::Worker::clear() { mainHistory.fill(-5); }
+void Search::Worker::clear() {
+    mainHistory.fill(-5);
+    duckHistory.clear();
+}
 
 
 // Main search function for both PV and non-PV nodes. The steps are numbered as
@@ -486,6 +492,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     bool  capture;
 
     SearchedList quietsSearched;
+    Bitboard     ducksSearched = 0;
 
     // Step 1. Initialize node
     bestValue = -VALUE_INFINITE;
@@ -539,7 +546,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         && pos.rule50_count() < 96)
         return ttData.value;
 
-    MovePicker mp(pos, ttData.move, depth, &mainHistory);
+    MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
 
     value = bestValue;
 
@@ -683,11 +690,14 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         }
 
         // If the move is worse than some previously searched move, remember its
-        // chess move, once, to update its stats later.
+        // chess move, once, and its duck square, to update their stats later.
         if (move != bestMove && !capture && quietsSearched.size() < SEARCHEDLIST_CAPACITY
             && std::find(quietsSearched.begin(), quietsSearched.end(), move.chess_move())
                  == quietsSearched.end())
             quietsSearched.push_back(move.chess_move());
+
+        if (move != bestMove)
+            ducksSearched |= move.duck_sq();
     }
 
     // Step 23. Check for a position without moves, otherwise update the quiet history
@@ -700,7 +710,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     // If there is a move that produces search value greater than alpha,
     // we update the stats of searched moves.
     else if (bestMove)
-        update_all_stats(pos, *this, bestMove, quietsSearched, depth);
+        update_all_stats(pos, *this, bestMove, quietsSearched, ducksSearched, depth);
 
     // Step 24. Write gathered information in transposition table. The main
     // search does not compute a static evaluation, so none is saved.
@@ -820,7 +830,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     // Initialize a MovePicker object for the current position, and prepare
     // to search the moves: the captures, each with every duck square.
-    MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory);
+    MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory, &duckHistory);
 
     // Step 5. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
@@ -953,20 +963,29 @@ Value value_from_tt(Value v, int ply, int r50c) {
 }
 
 
-// Updates the butterfly history at the end of search() when a bestMove is found:
-// a bonus for the best chess move if it is quiet, and a malus of the same size
-// for the other quiet chess moves searched before it.
+// Updates the histories at the end of search() when a bestMove is found. The
+// duck history: a bonus for the best move's duck square, and a malus of the
+// same size for the other squares the duck went to in the moves searched before
+// it, captures or not. The butterfly history: a bonus for the best chess move if
+// it is quiet, and a malus for the other quiet chess moves searched before it.
 void update_all_stats(const Position& pos,
                       Search::Worker& workerThread,
                       Move            bestMove,
                       SearchedList&   quietsSearched,
+                      Bitboard        ducksSearched,
                       Depth           depth) {
+
+    Color  us       = pos.side_to_move();
+    int    bonus    = std::min(133 * depth - 81, 1487);
+    Square bestDuck = bestMove.duck_sq();
+
+    workerThread.duckHistory.update(us, bestDuck, bonus);
+
+    for (Bitboard b = ducksSearched & ~square_bb(bestDuck); b;)
+        workerThread.duckHistory.update(us, pop_lsb(b), -bonus);
 
     if (pos.capture_stage(bestMove))
         return;
-
-    Color us    = pos.side_to_move();
-    int   bonus = std::min(133 * depth - 81, 1487);
 
     workerThread.mainHistory[us][bestMove.chess_raw()] << bonus;
 
