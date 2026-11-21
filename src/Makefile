@@ -694,9 +694,12 @@ ifeq ($(optimize),yes)
 
 	CXXFLAGS += -O3 -funroll-loops
 
+	# 32-bit ARM only: in Termux, g++ is clang for aarch64, which rejects these
 	ifeq ($(comp),gcc)
 		ifeq ($(OS), Android)
-			CXXFLAGS += -fno-gcse -mthumb -march=armv7-a -mfloat-abi=softfp
+			ifeq ($(arch),armv7)
+				CXXFLAGS += -fno-gcse -mthumb -march=armv7-a -mfloat-abi=softfp
+			endif
 		endif
 	endif
 
