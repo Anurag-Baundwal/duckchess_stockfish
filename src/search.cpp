@@ -83,6 +83,25 @@ Bitboard safe_ducks(const Position& pos) {
     return safe;
 }
 
+// Returns the squares where a duck stops move m of color c: the squares its
+// piece passes through and lands on (both the king's and the rook's when
+// castling), and m's own duck square, since the duck can't stay where it is.
+Bitboard blocking_ducks(Move m, Color c) {
+    Square from = m.from_sq();
+    Square to   = m.to_sq();
+
+    if (m.type_of() == CASTLING)
+    {
+        // Castling is encoded as "king captures friendly rook"
+        Square kto = relative_square(c, to > from ? SQ_G1 : SQ_C1);
+        Square rto = relative_square(c, to > from ? SQ_F1 : SQ_D1);
+
+        return Attacks::between_bb(from, kto) | Attacks::between_bb(to, rto) | m.duck_sq();
+    }
+
+    return Attacks::between_bb(from, to) | m.duck_sq();
+}
+
 Value value_to_tt(Value v, int ply);
 Value value_from_tt(Value v, int ply, int r50c);
 void  update_all_stats(const Position& pos,
@@ -522,6 +541,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     // Step 1. Initialize node
     bestValue = -VALUE_INFINITE;
+    ss->reply = Move::none();
 
     // Check for the available remaining time
     if (is_mainthread())
@@ -570,7 +590,10 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     if (!PvNode && is_valid(ttData.value) && ttData.depth >= depth
         && (ttData.bound & (ttData.value >= beta ? BOUND_LOWER : BOUND_UPPER))
         && pos.rule50_count() < 96)
+    {
+        ss->reply = ttData.move;
         return ttData.value;
+    }
 
     MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
 
@@ -579,6 +602,13 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     int      moveCount     = 0;
     Move     safeDucksMove = Move::none();
     Bitboard safeDucks     = 0;
+
+    // For duck refutations: by destination square, the last chess move to it
+    // and the duck squares that leave a good reply to it unblocked
+    struct Refutation {
+        Move     chessMove;
+        Bitboard ducks;
+    } refutations[SQUARE_NB] = {};
 
     // Step 14. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
@@ -593,6 +623,16 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
             continue;
 
         ++moveCount;
+
+        // Duck refutations. If the opponent had a good reply to this chess
+        // move with an earlier duck square, that reply is still there unless
+        // this duck square blocks it, so skip the move if it doesn't. Only once
+        // we have a move that doesn't lose, and not at the root, where a
+        // skipped move would keep its score from the previous iteration.
+        if (!rootNode && !is_loss(bestValue)
+            && refutations[move.to_sq()].chessMove == move.chess_move()
+            && (refutations[move.to_sq()].ducks & move.duck_sq()))
+            continue;
 
         if (rootNode && is_mainthread() && nodes > NODES_LIMIT_OUTPUT)
             main_manager()->updates.onIter(
@@ -625,7 +665,8 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                 (ss + 1)->pv->clear();
             }
 
-            value = mated_in(ss->ply + 2);
+            (ss + 1)->reply = Move::none();
+            value           = mated_in(ss->ply + 2);
         }
         else
         {
@@ -657,6 +698,19 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // principal variation or transposition table.
         if (threads.stop.load(std::memory_order_relaxed))
             return VALUE_ZERO;
+
+        // Duck refutations: if the opponent found a good reply to this move,
+        // remember the duck squares that don't block it
+        if (Move reply = (ss + 1)->reply)
+        {
+            Refutation& r       = refutations[move.to_sq()];
+            Bitboard    refuted = ~blocking_ducks(reply, ~pos.side_to_move());
+
+            if (r.chessMove == move.chess_move())
+                r.ducks |= refuted;
+            else
+                r = {move.chess_move(), refuted};
+        }
 
         if (rootNode)
         {
@@ -727,7 +781,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
             if (value > alpha)
             {
-                bestMove = move;
+                bestMove = ss->reply = move;
 
                 // Update PV even in fail-high case
                 if (PvNode && !rootNode)
@@ -810,8 +864,8 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         ss->pv->clear();
     }
 
-    bestMove  = Move::none();
-    moveCount = 0;
+    bestMove = ss->reply = Move::none();
+    moveCount            = 0;
 
     // Check for the available remaining time. Unlike in chess, one qsearch can
     // take longer than a fast time control: each capture comes with every duck
@@ -843,7 +897,12 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     // At non-PV nodes we check for an early TT cutoff
     if (!PvNode && ttData.depth >= DEPTH_QS && is_valid(ttData.value)
         && (ttData.bound & (ttData.value >= beta ? BOUND_LOWER : BOUND_UPPER)))
+    {
+        if (ttData.move && pos.capture_stage(ttData.move))
+            ss->reply = ttData.move;
+
         return ttData.value;
+    }
 
     // Step 4. Static evaluation of the position
     Value staticEval = VALUE_NONE;
@@ -886,6 +945,10 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     Move     safeDucksMove = Move::none();
     Bitboard safeDucks     = 0;
 
+    // For duck refutations: by destination square, the duck squares that leave
+    // a good reply to a capture there unblocked
+    Bitboard refutedDucks[SQUARE_NB] = {};
+
     // Step 5. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
     while ((move = mp.next_move()) != Move::none())
@@ -896,8 +959,10 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
         moveCount++;
 
-        // Step 6. Skip non-captures (a quiet TT move)
-        if (!capture)
+        // Step 6. Skip non-captures (a quiet TT move). As in the main search
+        // (duck refutations), also skip a capture whose duck square doesn't
+        // block a good reply found to an earlier capture on the same square.
+        if (!capture || (refutedDucks[move.to_sq()] & move.duck_sq()))
             continue;
 
         // Step 7. Make and search the move. As in the main search (Duck or
@@ -916,7 +981,8 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
             if (PvNode)
                 (ss + 1)->pv->clear();
 
-            value = mated_in(ss->ply + 2);
+            (ss + 1)->reply = Move::none();
+            value           = mated_in(ss->ply + 2);
         }
         else
             value = -qsearch<nodeType>(pos, ss + 1, -beta, -alpha);
@@ -930,6 +996,10 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         if (threads.stop.load(std::memory_order_relaxed))
             return VALUE_ZERO;
 
+        // Duck refutations
+        if (Move reply = (ss + 1)->reply)
+            refutedDucks[move.to_sq()] |= ~blocking_ducks(reply, ~pos.side_to_move());
+
         // Step 8. Check for a new best move
         if (value > bestValue)
         {
@@ -937,7 +1007,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
             if (value > alpha)
             {
-                bestMove = move;
+                bestMove = ss->reply = move;
 
                 // Update pv even in fail-high case
                 if (PvNode)
