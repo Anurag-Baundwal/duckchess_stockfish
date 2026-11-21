@@ -553,11 +553,39 @@ Journal
     (the user found them hard to follow; wakwak's are the model).
 
 
+2026-11-21  6    More SPRTs (182-192)                             85af5b0d
+  test  branch                 result                     merged as
+  182   duck-refutations       +229.3 +- 30.9, 626 games  6ef90d9d
+  183   late-duck-pruning      stopped, -60 +- 74, 76     (v1)
+  184   futility-pruning       failed, -299 +- 53, 310    -
+  186   late-duck-pruning-2    +128.0 +- 21.2, 862 games  85af5b0d
+  - Duck refutations (wakwak's #50-#89): once a non-losing move is found, a
+    chess move's later duck squares are skipped unless they block a good
+    reply found against an earlier one. Never at the root, whose skipped
+    moves would keep stale scores.
+  - Late duck pruning v1 pruned at PV nodes too and counted Duck or Die
+    losses; bench counters showed it dropped the best move at 20% of PV
+    alpha raises, and the only safe duck in 0.3% of prunes. v2: non-PV
+    nodes only, Duck or Die losses don't count, MovePicker::skip_ducks();
+    on top of refutations no bench cutoff came after its limit.
+  - Reverse futility pruning in Stockfish 18's form lost 0-40 even at equal
+    depth. A bench dump showed its prunes are wrong only 0.1-0.3% of the
+    time, but those are king hunts that a material + PSQT evaluation can't
+    see. Step 5 alone is node-identical to master.
+  - From 2026-11-21 evening: tests at 10+0.1 (LTC 60+0.6); accept or reject
+    only on OpenBench at 10+0.1, never on local fixed-depth or node matches.
+  - Running: 189 duck-shield (wakwak's #92 king danger, S(70, 68); paused at
+    -1 +- 32 while 191 tries S(140, 136)), 192 rfp-sf11 (Stockfish 11's RFP,
+    not when the king is attacked), 190 master vs Fairy-Stockfish (1000
+    games; fork Anurag-Baundwal/Fairy-Stockfish branch openbench only
+    changes build defaults so OpenBench's plain make has duck chess).
+
+
 Next steps
 ----------
-1. duck-refutations (wakwak's duck refutations): rebased on master, bench
-   4956461 (-75% nodes), debug games, then an SPRT.
-2. Phase 6, one SPRT per improvement: late duck pruning (now that ducks
-   are ordered by history) and the rest of wakwak's gains, interleaved
-   with Stockfish's search features (RFP, NMP, LMR) in stockfish_4pc's
-   order. Comments in Stockfish style, and plain enough to follow.
+1. Merge passing tests; retry failing ideas with modified versions; when a
+   test passes with less than expected, try a stronger version.
+2. Eval: king safety beyond the duck shield (attacks next to the king), then
+   search features (RFP once the eval allows it, LMR, NMP).
+3. Milestones: beat Fairy-Stockfish (test 190), then get within 500-600
+   Elo of wakwak.
