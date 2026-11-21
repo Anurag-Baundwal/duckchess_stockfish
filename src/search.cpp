@@ -170,6 +170,9 @@ bool Search::Worker::iterative_deepening() {
     double timeReduction = 1, totBestMoveChanges = 0;
     int    iterIdx = 0;
 
+    // When the last iteration ended, and how long the one before it took
+    TimePoint lastIterEnd = 0, prevIterTime = 0;
+
     // Allocate stack with extra size to allow access from (ss - 7) to (ss + 2)
     Stack  stack[MAX_PLY + 10] = {};
     Stack* ss                  = stack + 7;
@@ -406,9 +409,22 @@ bool Search::Worker::iterative_deepening() {
 
             auto elapsedTime = elapsed();
 
-            // Stop the search if we have exceeded totalTime or maximum time,
-            // or if we know that there are no better moves in the analysed line(s).
-            if (elapsedTime > std::min(totalTime, double(mainThread->tm.maximum()))
+            // In duck chess an iteration can take ten times as long as the one
+            // before it, so one started well within totalTime may run on to the
+            // maximum time. Predict the next iteration from the growth of the
+            // last two, and don't start it if it would end after twice totalTime.
+            TimePoint iterTime = elapsedTime - lastIterEnd;
+            double    growth =
+              prevIterTime > 0 ? std::clamp(double(iterTime) / prevIterTime, 2.0, 10.0) : 2.0;
+            bool nextTooLong = elapsedTime + growth * iterTime > 2 * totalTime;
+
+            lastIterEnd  = elapsedTime;
+            prevIterTime = iterTime;
+
+            // Stop the search if we have exceeded totalTime or maximum time, if the
+            // next iteration would take too long, or if we know that there are no
+            // better moves in the analysed line(s).
+            if (elapsedTime > std::min(totalTime, double(mainThread->tm.maximum())) || nextTooLong
                 || rootMoves[multiPV - 1].score >= mate_in(3) || rootMoves[0].score == mated_in(2))
             {
                 // If we are allowed to ponder do not stop the search now but
