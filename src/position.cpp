@@ -48,6 +48,7 @@ Key psq[PIECE_NB][SQUARE_NB];
 Key enpassant[FILE_NB];
 Key castling[CASTLING_RIGHT_NB];
 Key side, noPawns;
+Key duck[SQUARE_NB];
 
 }
 
@@ -68,7 +69,10 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
     for (Rank r = RANK_8;; --r)
     {
         for (File f = FILE_A; f <= FILE_H; ++f)
-            os << " | " << PieceToChar[pos.piece_on(make_square(f, r))];
+            os << " | "
+               << (make_square(f, r) == pos.duck_square()
+                     ? '*'
+                     : PieceToChar[pos.piece_on(make_square(f, r))]);
 
         os << " | " << (1 + r) << "\n +---+---+---+---+---+---+---+---+\n";
 
@@ -121,6 +125,10 @@ void Position::init() {
     Zobrist::side    = rng.rand<Key>();
     Zobrist::noPawns = rng.rand<Key>();
 
+    // Drawn last, so that the keys above stay as in Stockfish
+    for (Square s = SQ_A1; s <= SQ_H8; ++s)
+        Zobrist::duck[s] = rng.rand<Key>();
+
     // Prepare the cuckoo tables
     cuckoo.fill(0);
     cuckooMove.fill(Move::none());
@@ -164,7 +172,7 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
       from the standard English names. White pieces are designated using upper-case
       letters ("PNBRQK") whilst Black uses lowercase ("pnbrqk"). Blank squares are
       noted using digits 1 through 8 (the number of blank squares), and "/"
-      separates ranks.
+      separates ranks. The duck, if it is on the board, is "*".
 
    2) Active color. "w" means white moves next, "b" means black.
 
@@ -192,7 +200,8 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
 
     std::memset(reinterpret_cast<char*>(this), 0, sizeof(Position));
     std::memset(si, 0, sizeof(StateInfo));
-    st = si;
+    st             = si;
+    st->duckSquare = SQ_NONE;
 
     ss >> std::noskipws;
 
@@ -230,6 +239,19 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
 
             if (rank < RANK_1)
                 return PositionSetError("Invalid FEN. Invalid rank reached.");
+        }
+        else if (token == '*')
+        {
+            if (file >= FILE_NB)
+                return PositionSetError("Invalid FEN. Invalid file reached.");
+
+            if (st->duckSquare != SQ_NONE)
+                return PositionSetError("Invalid FEN. More than one duck.");
+
+            st->duckSquare = make_square(File(file), Rank(rank));
+            byTypeBB[ALL_PIECES] |= st->duckSquare;
+
+            ++file;
         }
         else
         {
@@ -385,9 +407,10 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
             // En passant square will be considered only if
             // a) side to move have a pawn threatening epSquare
             // b) there is an enemy pawn in front of epSquare
-            // c) there is no piece on epSquare or behind epSquare
-            enpassant = pawns && target
-                     && !(pieces() & (st->epSquare | (st->epSquare + pawn_push(sideToMove))));
+            // c) there is no piece or duck on epSquare and no piece behind epSquare
+            //    (the double push may have put the duck there)
+            enpassant = pawns && target && !(pieces() & st->epSquare)
+                     && !((pieces(WHITE) | pieces(BLACK)) & (st->epSquare + pawn_push(sideToMove)));
 
             // If no pawn can execute the en passant capture without leaving the king in check, don't record the epSquare
             while (pawns)
@@ -494,7 +517,7 @@ void Position::set_state() const {
 
     set_extra_bitboards();
 
-    for (Bitboard b = pieces(); b;)
+    for (Bitboard b = pieces(WHITE) | pieces(BLACK); b;)
     {
         Square s  = pop_lsb(b);
         Piece  pc = piece_on(s);
@@ -519,6 +542,9 @@ void Position::set_state() const {
 
     if (st->epSquare != SQ_NONE)
         st->key ^= Zobrist::enpassant[file_of(st->epSquare)];
+
+    if (st->duckSquare != SQ_NONE)
+        st->key ^= Zobrist::duck[st->duckSquare];
 
     if (sideToMove == BLACK)
         st->key ^= Zobrist::side;
@@ -557,7 +583,7 @@ std::optional<PositionSetError> Position::set(const string& code, Color c, State
 }
 
 
-// Returns a FEN representation of the position. In case of
+// Returns a FEN representation of the position, with the duck as "*". In case of
 // Chess960 the Shredder-FEN notation is used. This is mainly a debugging function.
 string Position::fen() const {
 
@@ -575,7 +601,9 @@ string Position::fen() const {
                 ss << emptyCnt;
 
             if (f <= FILE_H)
-                ss << PieceToChar[piece_on(make_square(f, r))];
+                ss << (make_square(f, r) == duck_square()
+                         ? '*'
+                         : PieceToChar[piece_on(make_square(f, r))]);
         }
 
         if (r == RANK_1)
@@ -670,8 +698,8 @@ bool Position::legal(Move m) const {
     if (pc == NO_PIECE || color_of(pc) != us)
         return false;
 
-    // The destination square cannot be occupied by a friendly piece
-    if (pieces(us) & to)
+    // The destination square cannot be occupied by a friendly piece or the duck
+    if ((pieces(us) & to) || to == duck_square())
         return false;
 
     // Handle the special case of a pawn move
@@ -1384,8 +1412,11 @@ bool Position::pos_is_ok() const {
             assert(0 && "pos_is_ok: En passant square");
     }
 
-    if ((pieces(WHITE) & pieces(BLACK)) || (pieces(WHITE) | pieces(BLACK)) != pieces()
-        || popcount(pieces(WHITE)) > 16 || popcount(pieces(BLACK)) > 16)
+    Bitboard duck = duck_square() != SQ_NONE ? square_bb(duck_square()) : 0;
+
+    if ((pieces(WHITE) & pieces(BLACK)) || ((pieces(WHITE) | pieces(BLACK)) & duck)
+        || (pieces(WHITE) | pieces(BLACK) | duck) != pieces() || popcount(pieces(WHITE)) > 16
+        || popcount(pieces(BLACK)) > 16)
         assert(0 && "pos_is_ok: Bitboards");
 
     for (PieceType p1 = PAWN; p1 <= KING; ++p1)

@@ -256,7 +256,7 @@ Move* generate_all(const Position& pos, Move* moveList, Color us) {
     }
 
     if constexpr (Type == EVASIONS)
-        target = ~pos.pieces(us);
+        target = pos.pieces(~us) | ~pos.pieces();  // Not the duck
 
     target &= ~pos.threats_by(ALL_PIECES);
 
