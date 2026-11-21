@@ -57,6 +57,27 @@ using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 
 // Add a small random component to draw evaluations to avoid 3-fold blindness
 Value value_draw(usize nodes) { return VALUE_DRAW - 1 + Value(nodes & 0x2); }
+
+// After a move, the duck squares that would keep the side to move from
+// capturing the opponent's king with the same chess move: every square if no
+// piece attacks the king once the duck is lifted, or if the move captured the
+// king of the side to move, otherwise the squares that block every attack
+// (none against a knight, pawn or king).
+Bitboard safe_ducks(const Position& pos) {
+    Color    us       = pos.side_to_move();
+    Square   ksq      = pos.square<KING>(~us);
+    Bitboard occupied = pos.pieces() ^ pos.duck_square();
+    Bitboard safe     = ~Bitboard(0);
+
+    if (!pos.pieces(us, KING))
+        return safe;
+
+    for (Bitboard b = pos.attackers_to(ksq, occupied) & pos.pieces(us); b;)
+        safe &= Attacks::between_bb(ksq, pop_lsb(b));
+
+    return safe;
+}
+
 Value value_to_tt(Value v, int ply);
 Value value_from_tt(Value v, int ply, int r50c);
 void  update_all_stats(const Position& pos,
@@ -543,7 +564,9 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     value = bestValue;
 
-    int moveCount = 0;
+    int      moveCount     = 0;
+    Move     safeDucksMove = Move::none();
+    Bitboard safeDucks     = 0;
 
     // Step 14. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
@@ -572,20 +595,43 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // Step 17. Make the move
         do_move(pos, move, st, ss);
 
-        // Step 19. Principal variation search: every move except the first one
-        // of a PV node is searched with a null window around alpha.
-        if (!PvNode || moveCount > 1)
-            value = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, depth - 1);
-
-        // Step 20. For PV nodes only, do a full PV search on the first move
-        // or after a fail high, otherwise let the parent node fail low with
-        // value <= alpha and try another move.
-        if (PvNode && (moveCount == 1 || value > alpha))
+        // Duck or Die. A move that leaves our king capturable loses at the
+        // opponent's next move, unless the position is already a draw: score
+        // it as such without searching it. The duck squares that keep the king
+        // safe are found once per chess move.
+        if (move.chess_move() != safeDucksMove)
         {
-            (ss + 1)->pv = &pv;
-            (ss + 1)->pv->clear();
+            safeDucksMove = move.chess_move();
+            safeDucks     = safe_ducks(pos);
+        }
 
-            value = -search<PV>(pos, ss + 1, -beta, -alpha, depth - 1);
+        if (!(safeDucks & move.duck_sq()) && !pos.is_draw(ss->ply + 1))
+        {
+            if (PvNode)
+            {
+                (ss + 1)->pv = &pv;
+                (ss + 1)->pv->clear();
+            }
+
+            value = mated_in(ss->ply + 2);
+        }
+        else
+        {
+            // Step 19. Principal variation search: every move except the first
+            // one of a PV node is searched with a null window around alpha.
+            if (!PvNode || moveCount > 1)
+                value = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, depth - 1);
+
+            // Step 20. For PV nodes only, do a full PV search on the first move
+            // or after a fail high, otherwise let the parent node fail low with
+            // value <= alpha and try another move.
+            if (PvNode && (moveCount == 1 || value > alpha))
+            {
+                (ss + 1)->pv = &pv;
+                (ss + 1)->pv->clear();
+
+                value = -search<PV>(pos, ss + 1, -beta, -alpha, depth - 1);
+            }
         }
 
         // Step 21. Undo move
@@ -822,6 +868,9 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     // to search the moves: the captures, each with every duck square.
     MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory);
 
+    Move     safeDucksMove = Move::none();
+    Bitboard safeDucks     = 0;
+
     // Step 5. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
     while ((move = mp.next_move()) != Move::none())
@@ -836,10 +885,26 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         if (!capture)
             continue;
 
-        // Step 7. Make and search the move
+        // Step 7. Make and search the move. A capture that leaves our king
+        // capturable loses, as in the main search (Duck or Die).
         do_move(pos, move, st, ss);
 
-        value = -qsearch<nodeType>(pos, ss + 1, -beta, -alpha);
+        if (move.chess_move() != safeDucksMove)
+        {
+            safeDucksMove = move.chess_move();
+            safeDucks     = safe_ducks(pos);
+        }
+
+        if (!(safeDucks & move.duck_sq()) && !pos.is_draw(ss->ply + 1))
+        {
+            if (PvNode)
+                (ss + 1)->pv->clear();
+
+            value = mated_in(ss->ply + 2);
+        }
+        else
+            value = -qsearch<nodeType>(pos, ss + 1, -beta, -alpha);
+
         undo_move(pos, move);
 
         assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
