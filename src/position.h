@@ -52,6 +52,7 @@ struct StateInfo {
     int    rule50;
     int    pliesFromNull;
     Square epSquare;
+    Square duckSquare;  // SQ_NONE until the duck is first placed
 
     // Not copied when making a move (will be recomputed anyhow)
     Key        key;
@@ -96,7 +97,7 @@ class Position {
     std::string                     fen() const;
 
     // Position representation
-    Bitboard pieces() const;  // All pieces
+    Bitboard pieces() const;  // All pieces and the duck
     template<typename... PieceTypes>
     Bitboard pieces(PieceTypes... pts) const;
     Bitboard pieces(Color c) const;
@@ -105,6 +106,7 @@ class Position {
     Piece                               piece_on(Square s) const;
     const std::array<Piece, SQUARE_NB>& piece_array() const;
     Square                              ep_square() const;
+    Square                              duck_square() const;
     bool                                empty(Square s) const;
     template<PieceType Pt>
     int count(Color c) const;
@@ -223,10 +225,12 @@ inline Piece Position::piece_on(Square s) const {
 
 inline const std::array<Piece, SQUARE_NB>& Position::piece_array() const { return board; }
 
-inline bool Position::empty(Square s) const { return piece_on(s) == NO_PIECE; }
+// The duck is not in board[], but it takes the square
+inline bool Position::empty(Square s) const { return !(pieces() & s); }
 
 inline Piece Position::moved_piece(Move m) const { return piece_on(m.from_sq()); }
 
+// All pieces and the duck
 inline Bitboard Position::pieces() const { return byTypeBB[ALL_PIECES]; }
 
 template<typename... PieceTypes>
@@ -258,6 +262,8 @@ inline Square Position::square(Color c) const {
 }
 
 inline Square Position::ep_square() const { return st->epSquare; }
+
+inline Square Position::duck_square() const { return st->duckSquare; }
 
 inline bool Position::can_castle(CastlingRights cr) const { return st->castlingRights & cr; }
 

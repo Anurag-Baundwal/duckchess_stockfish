@@ -24,7 +24,7 @@ Status
 [x] 1.5  minimal chess search
 [x] 1.6  32-bit Move + TT
 [x] 2.1  duck perft suite (80 positions, counts from wakwak)
-[ ] 2.2  the duck on the board (no functional change)
+[x] 2.2  the duck on the board (no functional change)
 [ ] 2.3  play duck chess: the duck perft suite passes
 [ ] 3    duck bench
 [ ] 4    fastchess smoke test (duck960 and duck)
@@ -290,7 +290,7 @@ Journal
     Phase 3 is just the duck bench; every improvement moved to the new
     Phase 6, one SPRT each.
 
-2026-11-21  2.1  Duck perft suite                             (this commit)
+2026-11-21  2.1  Duck perft suite                                  be5b0399
   - rustup installed (user's OK, 2026-11-21; host x86_64-pc-windows-msvc
     with the VS 2022 C++ tools). wakwak builds with its pinned Rust 1.99.
   - Studied for the rules: Silverrzz/fastchess cfa3671a44
@@ -311,11 +311,30 @@ Journal
     allows the duck on f1, where the rook lands, and forbids h1, which the
     rook left. wakwak and fastchess agree with each other on both.
 
+2026-11-21  2.2  Put the duck on the board                    (this commit)
+  - StateInfo::duckSquare (SQ_NONE until placed) sits in the part
+    do_move() copies, so the duck stays put until 2.3 moves it.
+    Zobrist::duck[64] is drawn after every other key, so the existing keys,
+    the cuckoo tables and the bench stay as they were.
+  - byTypeBB[ALL_PIECES] includes the duck; the piece-type and color
+    bitboards and board[] don't. empty(s) is now !(pieces() & s), so FEN
+    output and legal()'s pawn pushes see the duck. set_state() hashes
+    pieces(WHITE) | pieces(BLACK) instead of pieces().
+  - FEN: "*" in and out, and a second duck is an error. `d` shows it. An en
+    passant square stays valid with the duck on the square the pawn left;
+    with the duck on the en passant square itself, it is dropped.
+  - For a duck on the board: king evasions now target enemy pieces or empty
+    squares (not ~pieces(us)), legal() refuses moves onto the duck, and
+    pos_is_ok() expects ALL_PIECES = white | black | duck.
+  - Verified: Bench 29784993 (unchanged, also with the debug build); chess
+    perft 20/20 OK; duck FENs round-trip; the duck on e4 blocks only the
+    double push, on d6 it cancels en passant; a king in check does not step
+    onto it.
+
 
 Next steps
 ----------
-1. 2.2 The duck on the board (No functional change), then 2.3 Play duck
-   chess, checked with tests/duck_perft_check.py (PLAN.md).
+1. 2.3 Play duck chess, checked with tests/duck_perft_check.py (PLAN.md).
 2. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
    Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact; then
    Phase 6, one SPRT per improvement.
