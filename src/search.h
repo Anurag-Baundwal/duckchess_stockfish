@@ -109,7 +109,6 @@ struct Stack {
     PVMoves* pv;
     int      ply;
     Move     currentMove;
-    bool     inCheck;
 };
 
 
@@ -300,8 +299,7 @@ class Worker {
    private:
     bool iterative_deepening();
 
-    void
-    do_move(Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss);
+    void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);
     void undo_move(Position& pos, const Move move);
 
     // This is the main search function, for both PV and non-PV nodes

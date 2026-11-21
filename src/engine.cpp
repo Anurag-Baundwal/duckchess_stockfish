@@ -85,6 +85,8 @@ Engine::Engine() :
 
     options.add("nodestime", Option(0, 0, 10000));
 
+    options.add("UCI_Variant", Option("duck var duck", "duck"));
+
     options.add("UCI_Chess960", Option(false));
 
     options.add("UCI_LimitStrength", Option(false));

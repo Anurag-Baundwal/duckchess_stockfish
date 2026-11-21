@@ -31,27 +31,50 @@ namespace Stockfish::Benchmark {
 
 // Utility to verify move generation. All the leaf nodes up
 // to the given depth are generated and counted, and the sum is returned.
+// As in wakwak, a position where the game is over counts as one node below the
+// root: the side to move has no king or no chess move, or the halfmove clock
+// is at least 100.
 template<bool Root>
 u64 perft(Position& pos, Depth depth) {
 
-    StateInfo st;
+    if (!pos.pieces(pos.side_to_move(), KING))
+        return Root ? 0 : 1;
 
-    u64        cnt, nodes = 0;
-    const bool leaf = (depth == 2);
+    StateInfo     st;
+    MoveList<ALL> moves(pos);
 
-    for (const auto& m : MoveList<ALL>(pos))
+    if (!Root && (!moves.size() || pos.rule50_count() >= 100))
+        return 1;
+
+    u64 cnt, nodes = 0;
+
+    for (const auto& chessMove : moves)
     {
-        if (Root && depth <= 1)
-            cnt = 1, nodes++;
-        else
+        Bitboard duckSquares = pos.duck_targets(chessMove);
+
+        // At the last ply, just count the moves
+        if (!Root && depth == 1)
         {
-            pos.do_move(m, st);
-            cnt = leaf ? MoveList<ALL>(pos).size() : perft<false>(pos, depth - 1);
-            nodes += cnt;
-            pos.undo_move(m);
+            nodes += popcount(duckSquares);
+            continue;
         }
-        if (Root)
-            sync_cout << UCIEngine::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
+
+        while (duckSquares)
+        {
+            Move m = chessMove.with_duck(pop_lsb(duckSquares));
+
+            if (Root && depth <= 1)
+                cnt = 1, nodes++;
+            else
+            {
+                pos.do_move(m, st);
+                cnt = perft<false>(pos, depth - 1);
+                nodes += cnt;
+                pos.undo_move(m);
+            }
+            if (Root)
+                sync_cout << UCIEngine::move(m, pos.is_chess960()) << ": " << cnt << sync_endl;
+        }
     }
     return nodes;
 }

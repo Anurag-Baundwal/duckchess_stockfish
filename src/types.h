@@ -417,7 +417,7 @@ enum MoveType : u16 {
 // bit  6-11: origin square (from 0 to 63)
 // bit 12-13: promotion piece type - 2 (from KNIGHT-2 to QUEEN-2)
 // bit 14-15: special move flag: promotion (1), en passant (2), castling (3)
-// bit 16-21: duck square (from 0 to 63), not used yet
+// bit 16-21: duck square (from 0 to 63)
 // NOTE: en passant bit is set only when a pawn can be captured
 //
 // Special cases are Move::none() and Move::null(). We can sneak these in because
@@ -472,6 +472,12 @@ class Move {
     // The chess part of the move: the low 16 bits, without the duck square.
     // Histories are indexed by it, so their size does not depend on the duck.
     constexpr u16 chess_raw() const { return u16(data); }
+
+    // The chess move alone, as move generation makes it (duck square bits 0)
+    constexpr Move chess_move() const { return Move(chess_raw()); }
+
+    // The chess part of this move, with the duck moved to the given square
+    constexpr Move with_duck(Square s) const { return Move(chess_raw() | u32(s) << DuckSqShift); }
 
     struct MoveHash {
         usize operator()(const Move& m) const { return make_key(m.data); }

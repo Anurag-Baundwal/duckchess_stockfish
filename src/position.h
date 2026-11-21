@@ -56,12 +56,7 @@ struct StateInfo {
 
     // Not copied when making a move (will be recomputed anyhow)
     Key        key;
-    Bitboard   checkersBB;
     StateInfo* previous;
-    Bitboard   blockersForKing[COLOR_NB];
-    Bitboard   pinners[COLOR_NB];
-    Bitboard   checkSquares[PIECE_TYPE_NB];
-    Bitboard   threats[PIECE_TYPE_NB];
     Piece      capturedPiece;
     int        repetition;
 };
@@ -120,30 +115,20 @@ class Position {
     bool   castling_impeded(CastlingRights cr) const;
     Square castling_rook_square(CastlingRights cr) const;
 
-    // Checking
-    Bitboard checkers() const;
-    Bitboard blockers_for_king(Color c) const;
-    Bitboard check_squares(PieceType pt) const;
-    Bitboard pinners(Color c) const;
-
-    // Attacks to/from a given square
+    // Attacks to a given square
     Bitboard attackers_to(Square s) const;
     Bitboard attackers_to(Square s, Bitboard occupied) const;
-    void     update_slider_blockers(Color c) const;
-    Bitboard xattacks_by(PieceType pt, Color c, Bitboard occupied) const;
-    Bitboard threats_by(PieceType pt) const;
 
     // Properties of moves
-    bool  legal(Move m) const;
-    bool  capture(Move m) const;
-    bool  capture_stage(Move m) const;
-    bool  gives_check(Move m) const;
-    Piece moved_piece(Move m) const;
-    Piece captured_piece() const;
+    bool     legal(Move m) const;
+    bool     capture(Move m) const;
+    bool     capture_stage(Move m) const;
+    Bitboard duck_targets(Move m) const;
+    Piece    moved_piece(Move m) const;
+    Piece    captured_piece() const;
 
     // Doing and undoing moves
     void do_move(Move m, StateInfo& newSt);
-    void do_move(Move m, StateInfo& newSt, bool givesCheck);
     void undo_move(Move m);
     void do_null_move(StateInfo& newSt);
     void undo_null_move();
@@ -165,7 +150,6 @@ class Position {
     bool         is_chess960() const;
     bool         is_draw(int ply) const;
     bool         is_repetition(int ply) const;
-    bool         upcoming_repetition(int ply) const;
     bool         has_repeated() const;
     int          rule50_count() const;
     Value        non_pawn_material(Color c) const;
@@ -188,8 +172,6 @@ class Position {
     void set_castling_right(Color c, Square rfrom);
     Key  compute_material_key() const;
     void set_state() const;
-    void set_extra_bitboards() const;
-    void compute_threats() const;
 
     // Other helpers
     void move_piece(Square from, Square to);
@@ -278,36 +260,6 @@ inline Square Position::castling_rook_square(CastlingRights cr) const {
 }
 
 inline Bitboard Position::attackers_to(Square s) const { return attackers_to(s, pieces()); }
-
-// includes X-ray attacks through the king of color ~c
-inline Bitboard Position::xattacks_by(PieceType pt, Color c, Bitboard occupied) const {
-
-    if (pt == PAWN)
-        return c == WHITE ? pawn_attacks_bb<WHITE>(pieces(WHITE, PAWN))
-                          : pawn_attacks_bb<BLACK>(pieces(BLACK, PAWN));
-    else
-    {
-        Bitboard threats   = 0;
-        Bitboard attackers = pieces(c, pt);
-        while (attackers)
-            threats |= Attacks::attacks_bb(pt, pop_lsb(attackers), occupied);
-        return threats;
-    }
-}
-
-inline Bitboard Position::threats_by(PieceType pt) const {
-    if (!st->threats[ALL_PIECES])
-        compute_threats();
-    return st->threats[pt];
-}
-
-inline Bitboard Position::checkers() const { return st->checkersBB; }
-
-inline Bitboard Position::blockers_for_king(Color c) const { return st->blockersForKing[c]; }
-
-inline Bitboard Position::pinners(Color c) const { return st->pinners[c]; }
-
-inline Bitboard Position::check_squares(PieceType pt) const { return st->checkSquares[pt]; }
 
 inline Key Position::key() const { return adjust_key50(st->key); }
 
@@ -405,8 +357,6 @@ inline void Position::swap_piece(Square s, Piece pc) {
     remove_piece(s);
     put_piece(pc, s);
 }
-
-inline void Position::do_move(Move m, StateInfo& newSt) { do_move(m, newSt, gives_check(m)); }
 
 inline StateInfo* Position::state() const { return st; }
 

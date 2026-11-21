@@ -36,8 +36,8 @@ const std::vector<std::string> Defaults = {
   "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
   "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
   "4rrk1/pp1n3p/3q2pQ/2p1pb2/2PP4/2P3N1/P2B2PP/4RRK1 b - - 7 19",
-  "rq3rk1/ppp2ppp/1bnpb3/3N2B1/3NP3/7P/PPPQ1PP1/2KR3R w - - 7 14 moves d4e6",
-  "r1bq1r1k/1pp1n1pp/1p1p4/4p2Q/4Pp2/1BNP4/PPP2PPP/3R1RK1 w - - 2 14 moves g2g4",
+  "rq3rk1/ppp2ppp/1bnpb3/3N2B1/3NP3/7P/PPPQ1PP1/2KR3R w - - 7 14",
+  "r1bq1r1k/1pp1n1pp/1p1p4/4p2Q/4Pp2/1BNP4/PPP2PPP/3R1RK1 w - - 2 14",
   "r3r1k1/2p2ppp/p1p1bn2/8/1q2P3/2NPQN2/PPP3PP/R4RK1 b - - 2 15",
   "r1bbk1nr/pp3p1p/2n5/1N4p1/2Np1B2/8/PPP2PPP/2KR1B1R w kq - 0 13",
   "r1bq1rk1/ppp1nppp/4n3/3p3Q/3P4/1BP1B3/PP1N2PP/R4RK1 w - - 1 16",
@@ -50,7 +50,7 @@ const std::vector<std::string> Defaults = {
   "3q2k1/pb3p1p/4pbp1/2r5/PpN2N2/1P2P2P/5PP1/Q2R2K1 b - - 4 26",
   "6k1/6p1/6Pp/ppp5/3pn2P/1P3K2/1PP2P2/3N4 b - - 0 1",
   "3b4/5kp1/1p1p1p1p/pP1PpP1P/P1P1P3/3KN3/8/8 w - - 0 1",
-  "2K5/p7/7P/5pR1/8/5k2/r7/8 w - - 0 1 moves g5g6 f3e3 g6g5 e3f3",
+  "2K5/p7/7P/5pR1/8/5k2/r7/8 w - - 0 1",
   "8/6pk/1p6/8/PP3p1p/5P2/4KP1q/3Q4 w - - 0 1",
   "7k/3p2pp/4q3/8/4Q3/5Kp1/P6b/8 w - - 0 1",
   "8/2p5/8/2kPKp1p/2p4P/2P5/3P4/8 w - - 0 1",
@@ -68,10 +68,6 @@ const std::vector<std::string> Defaults = {
   "3Qb1k1/1r2ppb1/pN1n2q1/Pp1Pp1Pr/4P2p/4BP2/4B1R1/1R5K b - - 11 40",
   "4k3/3q1r2/1N2r1b1/3ppN2/2nPP3/1B1R2n1/2R1Q3/3K4 w - - 5 1",
   "1r6/1P4bk/3qr1p1/N6p/3pp2P/6R1/3Q1PP1/1R4K1 w - - 1 42",
-
-  // Positions with high numbers of changed threats
-  "k7/2n1n3/1nbNbn2/2NbRBn1/1nbRQR2/2NBRBN1/3N1N2/7K w - - 0 1",
-  "K7/8/8/BNQNQNB1/N5N1/R1Q1q2r/n5n1/bnqnqnbk w - - 0 1",
 
   // 5-man positions
   "8/8/8/8/5kp1/P7/8/1K1N4 w - - 0 1",     // Kc2 - mate
@@ -94,7 +90,7 @@ const std::vector<std::string> Defaults = {
 
   // Chess 960
   "setoption name UCI_Chess960 value true",
-  "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1 moves g2g3 d7d5 d2d4 c8h3 c1g5 e8d6 g5e7 f7f6",
+  "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1",
   "nqbnrkrb/pppppppp/8/8/8/8/PPPPPPPP/NQBNRKRB w KQkq - 0 1",
   "setoption name UCI_Chess960 value false"
 };
@@ -386,7 +382,7 @@ namespace Stockfish::Benchmark {
 // where to look for positions in FEN format, and the type of the limit:
 // depth, perft, nodes and movetime (in milliseconds). Examples:
 //
-// bench                            : search default positions up to depth 5
+// bench                            : search default positions up to depth 3
 // bench 64 1 15                    : search default positions up to depth 15 (TT = 64MB)
 // bench 64 1 100000 default nodes  : search default positions for 100K nodes each
 // bench 64 4 5000 current movetime : search current position with 4 threads for 5 sec
@@ -399,7 +395,7 @@ std::vector<std::string> setup_bench(const std::string& currentFen, std::istream
     // Assign default values to missing arguments
     std::string ttSize    = (is >> token) ? token : "16";
     std::string threads   = (is >> token) ? token : "1";
-    std::string limit     = (is >> token) ? token : "5";
+    std::string limit     = (is >> token) ? token : "3";
     std::string fenFile   = (is >> token) ? token : "default";
     std::string limitType = (is >> token) ? token : "depth";
 

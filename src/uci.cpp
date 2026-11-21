@@ -605,7 +605,8 @@ std::string UCIEngine::move(Move m, bool chess960) {
     if (m.type_of() == PROMOTION)
         move += " pnbrqk"[m.promotion_type()];
 
-    return move;
+    // Then the duck, as fastchess writes it: "e2e4,e4d5"
+    return move + "," + square(to) + square(m.duck_sq());
 }
 
 
@@ -616,12 +617,21 @@ std::string UCIEngine::to_lower(std::string str) {
     return str;
 }
 
+// A king capture ends the game, so it may come without the duck. It then gets
+// the first square the duck can go to.
 Move UCIEngine::to_move(const Position& pos, std::string str) {
     str = to_lower(str);
 
     for (const auto& m : MoveList<ALL>(pos))
-        if (str == move(m, pos.is_chess960()))
-            return m;
+        for (Bitboard b = pos.duck_targets(m); b;)
+        {
+            Move        dm = m.with_duck(pop_lsb(b));
+            std::string s  = move(dm, pos.is_chess960());
+
+            if (str == s
+                || (str == s.substr(0, s.find(',')) && type_of(pos.piece_on(m.to_sq())) == KING))
+                return dm;
+        }
 
     return Move::none();
 }
