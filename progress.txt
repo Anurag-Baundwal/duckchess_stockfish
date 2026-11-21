@@ -23,11 +23,13 @@ Status
 [x] 1.4  remove NUMA, large pages, shared memory
 [x] 1.5  minimal chess search
 [x] 1.6  32-bit Move + TT
-[ ] 2.1-2.6  duck rules, movegen, UCI, perft (standard and Duck960)
-[ ] 2.7  perft suite matches Fairy-Stockfish (n/n positions)
-[ ] 3.1-3.3  duck HCE, search, bench
+[x] 2.1  duck perft suite (80 positions, counts from wakwak)
+[ ] 2.2  the duck on the board (no functional change)
+[ ] 2.3  play duck chess: the duck perft suite passes
+[ ] 3    duck bench
 [ ] 4    fastchess smoke test (duck960 and duck)
-[ ] 5    OpenBench: duck variant next to Teams and FFA; SPRTs from then on
+[ ] 5    OpenBench: duck variant next to Teams and FFA
+[ ] 6    improvements, one SPRT each
 
 
 Quick reference
@@ -42,6 +44,12 @@ Format:  /c/msys64/clang64/bin/clang-format -i --style=file:.clang-format FILE
 Git:     from Git Bash only (MSYS2's git ignores core.autocrlf).
 Chess perft (Phase 1): python tests/chess_perft.py <absolute path to
   src\stockfish.exe>. tests/perft.sh itself needs `expect`, not installed.
+wakwak (duck perft reference), with Rust 1.99 from rustup:
+  set CARGO_TARGET_DIR to a folder outside the repo, then in repos7/wakwak
+  `cargo build --release --locked` -> %CARGO_TARGET_DIR%\release\wakwak.exe
+Duck perft: python tests/duck_perft_check.py <engine> [--wakwak <wakwak.exe>]
+  [--max-depth N]; python tests/gen_duck_perft.py <wakwak.exe> recomputes the
+  counts in tests/duck_perft.epd.
 
 
 Journal
@@ -247,7 +255,7 @@ Journal
     (none); MultiPV 3, searchmoves, Threads 4 and 8, a clock search.
     Startpos depth 9: 3.6M nodes in 0.4 s; bench 7.2M nps on this laptop.
 
-2026-11-21  1.6  32-bit Move with a duck field, 2-entry TT    (this commit)
+2026-11-21  1.6  32-bit Move with a duck field, 2-entry TT         85d06fe3
   - Move is 32 bits: the low 16 keep Stockfish's layout and bits 16-21 hold
     the duck square (Move::duck_sq(), DuckSqShift = 16), always 0 for now.
     raw() returns all 32 bits. chess_raw() returns the low 16, which index
@@ -272,10 +280,42 @@ Journal
     warnings; chess perft 20/20 OK; Threads 4 and MultiPV 2 searches under
     assertions.
 
+2026-11-21  -  Plan Phase 2 with wakwak as the reference           d4205e1c
+  - The user: Fairy-Stockfish is very weak at duck chess, wakwak is the
+    better model; and nothing (a qsearch duck cap included) goes in for good
+    without an SPRT. So wakwak is the design and perft reference, fastchess's
+    DuckPosition the rules authority, Fairy-Stockfish a cross-check only.
+  - Phase 2 got detailed steps (2.1 tests, 2.2 the duck on the board, 2.3 one
+    "play duck chess" commit). Phase 2's search has nothing duck-specific.
+    Phase 3 is just the duck bench; every improvement moved to the new
+    Phase 6, one SPRT each.
+
+2026-11-21  2.1  Duck perft suite                             (this commit)
+  - rustup installed (user's OK, 2026-11-21; host x86_64-pc-windows-msvc
+    with the VS 2022 C++ tools). wakwak builds with its pinned Rust 1.99.
+  - Studied for the rules: Silverrzz/fastchess cfa3671a44
+    app/src/game/variant/position.cpp (DuckPosition), wakwak's movegen.rs,
+    move.rs, perft.rs and terminal_state(). The rules are in PLAN.md.
+  - wakwak's perft counts a terminal position as one node: the side to move
+    has no king, or no chess move, or a halfmove clock of at least 100. Its
+    splitperft does not apply this to the root, and neither will our
+    `go perft` (whose divide matches splitperft's lines, `e2e4,e4d5: N`).
+  - tests/duck_perft.epd: 80 positions, D1-D3, D4 for the start position and
+    a king-and-pawn position. 28 hand-built rule cases, then 30 standard and
+    22 DFRC positions from wakwak's genfens (seeds 20261121-20261125). Run in
+    about 20 s by wakwak.
+  - Start position: 640, 379440, 249921262, 164318412891.
+  - Cross-check with Fairy-Stockfish, D1-D3 of all 80: it agrees except
+    (a) where a game end falls inside the depth, because it keeps counting
+    there, and (b) Duck960 castling with the king already on g1 or g8: it
+    allows the duck on f1, where the rook lands, and forbids h1, which the
+    rook left. wakwak and fastchess agree with each other on both.
+
 
 Next steps
 ----------
-1. Phase 2: duck rules, movegen, UCI notation, perft against Fairy-Stockfish,
-   including Duck960 (PLAN.md). Write a detailed plan for it first.
+1. 2.2 The duck on the board (No functional change), then 2.3 Play duck
+   chess, checked with tests/duck_perft_check.py (PLAN.md).
 2. Phases 3 and 4, then Phase 5: OpenBench with wakwak's test setup (Duck960,
-   Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact.
+   Duck_DFRC.epd, Silverrzz/fastchess), keeping Teams and FFA intact; then
+   Phase 6, one SPRT per improvement.

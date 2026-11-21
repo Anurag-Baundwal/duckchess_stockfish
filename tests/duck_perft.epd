@@ -1,0 +1,118 @@
+# Duck perft positions. Counts come from wakwak's splitperft, see
+# gen_duck_perft.py, and are checked by duck_perft_check.py. A terminal
+# position below the root (no king or no chess move for the side to move,
+# or a halfmove clock of 100) counts as one node.
+
+# Start position, and black's reply after 1.e4 with the duck on e5
+rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ;D1 640 ;D2 379440 ;D3 249921262 ;D4 164318412891
+rnbqkbnr/pppppppp/8/4*3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1 ;D1 589 ;D2 518554 ;D3 335822826
+
+# No duck yet: the first duck may go on any empty square
+r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3 ;D1 865 ;D2 787127 ;D3 677848995
+r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 ;D1 1544 ;D2 1980939 ;D3 2888667469
+
+# Castling: duck off both paths, on f1 (blocks O-O), on b1 (blocks O-O-O
+# through the rook's path), and on d8 for black
+r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1 ;D1 1510 ;D2 1940435 ;D3 2752668031
+r3k2r/8/8/8/8/8/8/R3K*1R w KQkq - 0 1 ;D1 1313 ;D2 1664391 ;D3 2400836710
+r3k2r/8/8/8/8/8/8/R*2K2R w KQkq - 0 1 ;D1 1256 ;D2 1584192 ;D3 2295586454
+r2*k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1 ;D1 1313 ;D2 1664391 ;D3 2408813400
+
+# Castling out of and through attacked squares is allowed
+r3k2r/8/8/8/8/8/3q4/R3K2R w KQkq - 0 1 ;D1 1485 ;D2 3625405 ;D3 4922461401
+
+# En passant, and the duck on the en passant square forbidding it
+rnbqkbnr/ppp1pppp/8/3pP3/8/7*/PPPP1PPP/RNBQKBNR w KQkq d6 0 3 ;D1 869 ;D2 687499 ;D3 635103770
+rnbqkbnr/ppp1pppp/3*4/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3 ;D1 930 ;D2 733135 ;D3 672508137
+
+# A double push next to an enemy pawn allows en passant, unless the same
+# move puts the duck on the skipped square
+4k3/8/8/8/1p6/8/P7/4K3 w - - 0 1 ;D1 420 ;D2 153342 ;D3 71950392 ;D4 32350758680
+
+# Promotions with and without capture, for both sides
+1r2k3/P7/8/8/8/8/7p/4K1N1 w - - 0 1 ;D1 932 ;D2 1024088 ;D3 897119816
+
+# King captures: available to the side to move, then against it, and
+# between adjacent kings
+4k3/8/8/8/8/8/8/4K2r b - - 0 1 ;D1 916 ;D2 252183 ;D3 261696689
+4k3/8/8/8/8/8/8/4K2r w - - 0 1 ;D1 305 ;D2 302938 ;D3 122342518
+8/8/8/3kK3/8/8/8/8 w - - 0 1 ;D1 497 ;D2 208931 ;D3 93055506
+
+# No chess move: the side to move wins. At the root, and below it when black
+# puts the duck on b3
+7k/8/8/8/p1p5/P*P5/PPP5/KB6 w - - 0 1 ;D1 0 ;D2 0 ;D3 0
+7k/8/8/8/p1p5/P1P5/PPP5/KB5* b - - 0 1 ;D1 159 ;D2 16380 ;D3 6863727
+
+# Halfmove clock 99: every quiet move ends the game; a pawn move does not
+4k3/8/8/8/8/8/8/R3K3 w Q - 99 80 ;D1 976 ;D2 976 ;D3 976
+4k3/8/8/8/8/8/4P3/R3K3 w Q - 99 80 ;D1 1020 ;D2 35710 ;D3 33443870
+
+# The duck blocks a queen, a double push, and a single push
+4k3/8/8/8/3*4/8/3Q4/4K3 w - - 0 1 ;D1 1260 ;D2 371700 ;D3 572625648
+4k3/8/8/8/4*3/8/4P3/4K3 w - - 0 1 ;D1 300 ;D2 88500 ;D3 37534500
+4k3/8/8/8/8/4*3/4P3/4K3 w - - 0 1 ;D1 240 ;D2 70800 ;D3 31265400
+
+# Duck960 castling: king b1 between the rooks; the duck on f1 blocks only
+# O-O; with the king on f1, the duck on b1 blocks only O-O-O; O-O with the
+# king already on g1; O-O-O with the rook already on d1
+1r4kr/8/8/8/8/8/8/RK5R w HAhb - 0 1 ;D1 1451 ;D2 1877008 ;D3 2561898760
+1r4kr/8/8/8/8/8/8/RK3*1R w HAhb - 0 1 ;D1 1141 ;D2 1458080 ;D3 2036566765
+r4k1r/8/8/8/8/8/8/R*3K1R w HAha - 0 1 ;D1 1199 ;D2 1501603 ;D3 2177828003
+6kr/8/8/8/8/8/8/6KR w Hh - 0 1 ;D1 721 ;D2 394396 ;D3 340718423
+3rk3/8/8/8/8/8/8/3RK3 w Dd - 0 1 ;D1 901 ;D2 659832 ;D3 597114104
+
+# Random positions from wakwak's genfens (book None): 20 standard after
+# 8 plies, 10 standard after 20, then DFRC: 12 after 8 plies, 6 after 16,
+# and 4 starts
+rnbqkbnr/pp2ppp1/*6p/2pp4/5PPP/7R/PPPPP3/RNBQKBN1 w Qkq - 0 5 ;D1 837 ;D2 694970 ;D3 566677038
+rnbqkbnr/1p1ppppp/p7/2p4P/5P2/5N1R/PPPPP1P1/RNBQKB1* b Qkq - 0 5 ;D1 620 ;D2 498851 ;D3 340754275
+r2qkbnr/pppb1ppp/2n1p3/1N1p4/8/5N1P/PPPPPPP1/R1BQKB*R w KQkq - 2 5 ;D1 808 ;D2 834523 ;D3 707537037
+rn1qkb1r/p1p1pppp/3p3n/1p6/1P3Pb1/1*PP4/PB2P1PP/RN1QKBNR b KQkq - 0 5 ;D1 869 ;D2 608844 ;D3 512711098
+1nbqkb1r/1ppppp1p/r*3n2/p5N1/4P2P/7R/PPPP1PP1/RNBQKB2 b Qk - 0 5 ;D1 641 ;D2 748204 ;D3 648258165
+rn1qkbnr/ppp1pp1p/3p4/5bp1/P7/1P2P1*N/2PP1PPP/RNBQKB1R w KQkq - 1 5 ;D1 900 ;D2 850517 ;D3 818264258
+rnbqkb1r/pp1p1p1p/4pn2/2p*2pP/P7/2N5/1PPPPPPR/R1BQKBN1 b Qkq - 2 5 ;D1 776 ;D2 572841 ;D3 484900728
+rn1qkbnr/p1ppppp1/b6p/8/pP*5/N7/2PPPPPP/1RBQKBNR w Kkq - 2 5 ;D1 608 ;D2 388669 ;D3 285377888
+rnbqkbnr/4pppp/pp6/2pp4/2*3P1/P2P1N1P/1PP1PP2/RNBQKB1R b KQkq - 0 5 ;D1 776 ;D2 690783 ;D3 566766317
+r1bqkb1r/ppppppp1/7n/2n4p/5P1N/6*1/PPPPP1PP/RNBQKBR1 w Qkq - 1 5 ;D1 589 ;D2 438743 ;D3 304840683
+rnbqkbnr/pp1p1pp1/4p3/7p/2pPP3/P2*3N/1PP2PPP/RNBQKB1R w KQkq - 0 5 ;D1 931 ;D2 899350 ;D3 905973027
+r1bqkbnr/2ppp1pp/np3p2/p4*2/8/5PKP/PPPPP1P1/RNBQ1BNR w kq - 0 5 ;D1 651 ;D2 407650 ;D3 275106671
+r1bqkbnr/pp2ppp1/n6p/2pp4/*3N3/8/PPPPPPPP/R1BQKBNR w KQkq - 2 5 ;D1 714 ;D2 606642 ;D3 459228307
+r1bqkbnr/ppppp1pp/n3*p2/8/PP2P1Q1/3P4/2P2PPP/RNB1KBNR b KQkq - 2 5 ;D1 528 ;D2 688556 ;D3 433972789
+rnbqkb1r/pp2pppp/3p4/2p1N3/4n3/P*1P4/1PP1PPPP/RNBQKB1R w KQkq - 0 5 ;D1 932 ;D2 926581 ;D3 876359030
+rnbqkb*r/pppnpp1p/3p4/6p1/1P3N2/N7/P1PPPPPP/R1BQKB1R w KQkq - 2 5 ;D1 744 ;D2 524334 ;D3 408227393
+r1bqk1nr/1pppppbp/2n3p1/p7/1P1P4/N3B*2/P1P1PPPP/R2QKBNR w KQkq - 2 5 ;D1 776 ;D2 671123 ;D3 586216221
+r1bqkbnr/ppp1ppp1/n2p4/7p/1P4P1/1*P4N/P2PPP1P/RNBQKB1R w KQkq - 0 5 ;D1 652 ;D2 521868 ;D3 397999453
+rnb1kbnr/1p1ppp1p/pqp3p1/8/P7/2N*P1P1/1PPP1P1P/R1BQKBNR w KQkq - 1 5 ;D1 899 ;D2 742124 ;D3 747427403
+rn1qkbnr/ppp1p1pp/3p1p2/5b2/P5P1/2*2P2/1PPPP2P/RNBQKBNR b KQkq - 0 5 ;D1 901 ;D2 585678 ;D3 506463113
+1r1qk1nr/p3pp1p/np5b/2pp2p1/PP4P1/R*N1PP1b/2PPK2P/2BQ2NR w k - 0 11 ;D1 707 ;D2 549214 ;D3 433313758
+rnbq1b1r/1pppk1p1/p4n1p/PP3p2/2*1p3/B2BP2N/2PP1PPP/RN1QK1R1 b Q - 0 11 ;D1 808 ;D2 744795 ;D3 589451878
+rnbqkb1r/3p1p2/6*n/ppp1p1pp/PP4P1/R3PP1N/2PP1KBP/1NBQ3R w - - 6 11 ;D1 1028 ;D2 937712 ;D3 933918109
+r1bq1bnr/p1pk2p1/np2p2B/3p1p2/2PP3P/PP3N2/*3PPP1/RN1QKBR1 w Q - 0 11 ;D1 866 ;D2 879028 ;D3 789137120
+1r1qk1nr/ppp2pp1/n3b2p/2Ppp3/1b2*1PP/NN3P2/PP1PP3/1RBQKB1R b Kk - 0 11 ;D1 1060 ;D2 706641 ;D3 770820893
+r1bqkb1r/2ppppp1/7n/1p6/1QPP3p/P4N1P/1P*1nPP1/R2NKB1R b KQkq - 1 11 ;D1 1023 ;D2 1099069 ;D3 1136301050
+rnbq1b1r/2pkppp1/5n1p/1P1p4/p1P2PP1/1P*4P/R2PP3/1NBQKBNR w K - 0 11 ;D1 803 ;D2 765745 ;D3 663010503
+1rb1q2r/1ppppkbp/5p1n/pPn3p*/2P5/N3PP1P/PB1PB1P1/R2QK1NR w KQ a6 0 11 ;D1 870 ;D2 759191 ;D3 646009760
+r1bqk3/p2pppb1/n1*2n1r/1ppP4/PP3PBp/6P1/1BPNP2P/R2QK1NR w KQq - 1 11 ;D1 1253 ;D2 1134305 ;D3 1378593769
+rnb1k1n1/pp1pb3/2p1pp1r/qP3*pp/2P5/P5BP/3PPPP1/RN1QKBNR b KQq - 0 11 ;D1 997 ;D2 766029 ;D3 763787071
+bnrqkn1b/pp1pppr1/8/1Np3pp/4P1P1/7*/PPPP1P1P/BQ1BNRKR b HFc - 3 5 ;D1 776 ;D2 627869 ;D3 518715978
+nb1r1knr/pbppqppp/8/1pP1p3/7*/3NP3/PPKP1PPP/NRB2BRQ b hd - 0 5 ;D1 1025 ;D2 644804 ;D3 653022744
+bbrnqknr/pppp1p1p/4p1p1/1N6/P3P*2/8/1PPP1PPP/R1BKNRQB w FAhc - 0 5 ;D1 777 ;D2 465709 ;D3 375106135
+rbbk1rqn/1ppppppp/1*3n2/p4Q2/6P1/2P1P3/PP1P1P1P/R1KBBNRN w GAfa - 2 5 ;D1 1337 ;D2 953529 ;D3 1149740926
+nrqb1kbr/1ppppp1p/p2n4/2Q2*p1/2P5/8/PP1PPPPP/B1RBNKRN w GChb - 2 5 ;D1 1180 ;D2 682719 ;D3 810739210
+bqnbn1kr/1pp1prpp/p7/1*1p1p2/4P3/2P5/PP1PRPPP/NRQ1KBBN w h - 2 5 ;D1 715 ;D2 529906 ;D3 400648436
+qnbrkbrn/pp2p1p1/3p1p2/2p4p/1P3P2/5K2/P1PPP*PP/NNBBRQ1R w gd - 0 5 ;D1 807 ;D2 614892 ;D3 529028226
+b1nbrqkr/pp1pp1p1/n4p2/2p4p/1P1P1*2/6P1/PBP1PP1P/1BNRQKNR w HDhe - 0 5 ;D1 808 ;D2 621416 ;D3 534952260
+bqnb1rkr/p1pp1ppp/4p3/1p3P2/1P4P1/1*2R3/P1PP1P1P/NNBQ1KRB b Ghf - 1 5 ;D1 962 ;D2 1308032 ;D3 1220989932
+rbqnbknr/pp1pp3/4*Bp1/2p4p/1PP5/8/P2PPPPP/1NRQKBRN w GCha - 0 5 ;D1 1027 ;D2 925451 ;D3 904239574
+rkbbrqnn/ppp1pp1p/6p1/3p4/4P1P1/2NN2*1/PPPP1P1P/QR2BBKR w HBea - 3 5 ;D1 839 ;D2 563883 ;D3 490672285
+qbbrnk1r/ppppnp1p/4p3/6p1/4*3/5P1P/PPPPP1P1/QBBNRKNR w HEhd - 0 5 ;D1 558 ;D2 432946 ;D3 276377680
+rbn1krnq/p2p2pp/8/1pPbp3/2P2p1*/N6P/PPQ1PPPK/B2NRB1R b - - 0 9 ;D1 1059 ;D2 935419 ;D3 963258152
+qbbrk2r/ppp1pn1n/6p*/3p1p1p/1N3P2/4P3/PPPP1KPP/BBNRQ1R1 w d - 0 9 ;D1 838 ;D2 650868 ;D3 563613480
+bqr1kb1r/2ppp2p/ppn2np1/5p2/2*P1PP1/P1P1N2P/1P2P3/QRK1RBBN w EB - 3 9 ;D1 715 ;D2 643128 ;D3 508594534
+r1n1bkrn/bppp1p1p/p5p1/4p1q1/P5Q1/2P1PPP1/1P*P1K1P/R1BB1NNR b ga - 0 9 ;D1 1088 ;D2 1062402 ;D3 1107855903
+rqnk1bnr/2p3pp/3p2b1/pp2p3/P7/2PNPP2/1P1PQP*P/R1K1RBBN b ha - 0 9 ;D1 930 ;D2 662464 ;D3 634698495
+rnb1knrq/p4p1p/4p1p1/1ppp4/3*P2b/N2P1P2/PPP1K1PP/R1NBBQ1R b ga - 0 9 ;D1 994 ;D2 857437 ;D3 891955167
+nbrnkqbr/pppppppp/8/8/8/8/PPPPPPPP/BNRBQKNR w HChc - 0 1 ;D1 640 ;D2 360220 ;D3 238373327
+rbnqbknr/pppppppp/8/2*5/4P3/8/PPPP1PPP/RKRBQNBN b CAha - 0 1 ;D1 589 ;D2 416947 ;D3 275570088
+qrbnknrb/pppppppp/8/1*6/P7/8/1PPPPPPP/BBRNKQRN b GCgb - 0 1 ;D1 589 ;D2 330677 ;D3 215351487
+qrkbbnrn/pppppppp/8/8/5*2/6N1/PPPPPPPP/BRNBQ1KR b HBgb - 1 1 ;D1 589 ;D2 403000 ;D3 253633077
