@@ -580,7 +580,11 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     Move     safeDucksMove = Move::none();
     Bitboard safeDucks     = 0;
 
-    // Step 14. Loop through all legal moves until no moves remain
+    // The chess move being tried, and with how many duck squares so far
+    Move chessMove = Move::none();
+    int  duckCount = 0;
+
+    // Step 13. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
     while ((move = mp.next_move()) != Move::none())
     {
@@ -601,6 +605,24 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
             (ss + 1)->pv = nullptr;
 
         capture = pos.capture_stage(move);
+
+        if (move.chess_move() != chessMove)
+        {
+            chessMove = move.chess_move();
+            duckCount = 0;
+        }
+
+        // Step 14. Pruning at shallow depth
+        if (!rootNode && !is_loss(bestValue))
+        {
+            // Late duck pruning. The duck squares of a chess move come in duck
+            // history order, best first: for a quiet chess move, skip all but
+            // the first few.
+            if (!capture && depth <= 8 && duckCount >= 2 + 2 * depth)
+                continue;
+        }
+
+        ++duckCount;
 
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
