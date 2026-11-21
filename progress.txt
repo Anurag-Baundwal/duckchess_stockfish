@@ -428,7 +428,7 @@ Journal
     checks the clock at the top of its qsearch too, every 1024 nodes.
     Revisit only by SPRT, once a pruned qsearch makes the trees small.
 
-2026-11-21  4    Fastchess smoke test                         (this commit)
+2026-11-21  4    Fastchess smoke test                              81273ee9
   - Silverrzz/fastchess cfa3671a44 builds with MSYS2 g++ (`make -j8` in the
     clone). 8+0.08, Hash 16, concurrency 5 on this laptop, books of 300
     genfens openings from wakwak (4 or 5 random plies, standard and DFRC),
@@ -459,16 +459,36 @@ Journal
     OpenBench gives fastchess timemargin=250, so this won't add time
     losses to SPRTs; fixing it is the first Phase 6 candidate.
 
+2026-11-21  5    OpenBench, not deployed yet                  (this commit)
+  - Branch "duck" of the OpenBench fork (github.com/Anurag-Baundwal/
+    OpenBench), two commits on master 6e4a465:
+    f93869e  server: EngineConfig.variant and Test.variant (migration
+             0025), Duck_DFRC.epd (migration 0026), "variants" in
+             Config/config.json (duck: Silverrzz/fastchess cfa3671a44),
+             same-variant check, no datagen for variant engines,
+             Engines/duckchess_stockfish.json with wakwak's presets and
+             reference NPS 9000000;
+    dc0cbd2  client 70: builds the pinned fastchess into Runners/ and
+             plays variant tests with it (-variant duck960 for FRC books),
+             one result per game pair, as Teams.
+  - Written in a clone outside repos7/openbench, whose working tree has
+    the user's uncommitted Client changes (cleanup.sh among them, which
+    the branch also edits).
+  - Checked on a local server and Worker: Teams (stockfish_4pc from a
+    local: source, no token), FFA and duck GAMES tests side by side, all
+    played to the end. The duck test: engine built with profile-build
+    from GitHub, bench 43908424, fastchess built from GitHub's archive,
+    42 games, no errors. A duck vs 4PC test is refused.
+  - Deploying needs the user: merge into master and push, then on the
+    server pull, migrate, import_engines Engines/duckchess_stockfish.json
+    and reload. Every Worker, friends' too, then updates to client 70; the
+    first duck Workload on each downloads the 121 MB book and builds
+    fastchess (about a minute here).
+
 
 Next steps
 ----------
-1. Phase 5: OpenBench (PLAN.md). Work in progress, not deployed: branch
-   "duck" of the OpenBench fork, in a clone outside repos7/openbench. The
-   server has EngineConfig/Test.variant (migration 0025, which also adds
-   Duck_DFRC.epd), "variants" in Config/config.json with the pinned
-   fastchess, same-variant checks, and Engines/duckchess_stockfish.json
-   with wakwak's presets; the client (version 70) builds fastchess into
-   Runners/ and plays variant tests with it. Next: a local server and
-   worker running Teams, FFA and duck tests side by side; then deploying
-   needs the user, since every Worker (friends' too) updates to client 70.
+1. Phase 5: deploy (above, with the user's go-ahead), then a fixed-games
+   duck test (dev = base) on the real instance while Teams and FFA tests
+   keep running.
 2. Phase 6, one SPRT per improvement, starting with time management.

@@ -206,15 +206,17 @@ through `ffa_match.py`. **Teams and FFA must keep working unchanged.**
   `ffa` flag still picks Teams or FFA), following the FFA precedent
   (416782b) and MattBench 213d671's per-variant runners. Every new code path
   is gated on it; `match.py` and `ffa_match.py` are not edited.
-- Server: migration, `import_engines` reads `variants` (`Duck960`,
-  `Duckchess`), `verify_workload.py` requires Dev and Base of the same
-  variant and keeps the 4PC limits for 4PC tests, `get_workload.py` sends the
-  runner config, `Engines/duckchess_stockfish.json` with presets copied from
-  wakwak's, the book through a Books migration.
+- Server: migration, `import_engines` reads the engine's `variant`
+  (`duck`), `Config/config.json` maps each variant to its pinned runner,
+  `verify_workload.py` requires Dev and Base of the same variant and keeps
+  the 4PC limits, `get_workload.py` sends the runner config,
+  `Engines/duckchess_stockfish.json` with presets copied from wakwak's, the
+  book through a Books migration.
 - Client: for duck workloads, build the pinned fastchess into
-  `Runners/<variant>`, run it with `-variant duck960`, the book, adjudication,
-  `-pgnout` and `-recover`, and parse its "Finished game" lines; add
-  fastchess to the cleanup lists; bump the client version.
+  `Runners/<name>-<commit>`, run it with `-variant duck960` (FRC books) or
+  `duck`, the book, adjudication, `-pgnout` and `-recover`, and parse its
+  "Finished game" lines; add `Runners/` to the cleanup; bump the client
+  version.
 - Before relying on it: Teams, FFA and duck tests side by side on a local
   server and worker.
 - First test: a fixed-games duck test (dev = base) to prove the pipeline,
