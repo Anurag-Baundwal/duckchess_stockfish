@@ -58,22 +58,27 @@ using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 // Add a small random component to draw evaluations to avoid 3-fold blindness
 Value value_draw(usize nodes) { return VALUE_DRAW - 1 + Value(nodes & 0x2); }
 
-// After a move, the duck squares that would keep the side to move from
-// capturing the opponent's king with the same chess move: every square if no
-// piece attacks the king once the duck is lifted, or if the move captured the
-// king of the side to move, otherwise the squares that block every attack
-// (none against a knight, pawn or king).
+// Called after we made a move: returns the squares where our duck keeps our
+// king safe from capture, given the chess move we played. The answer is the
+// same for every duck square of that chess move, so the search computes it
+// once per chess move.
 Bitboard safe_ducks(const Position& pos) {
-    Color    us       = pos.side_to_move();
-    Square   ksq      = pos.square<KING>(~us);
-    Bitboard occupied = pos.pieces() ^ pos.duck_square();
+
+    Color    them     = pos.side_to_move();
+    Square   ksq      = pos.square<KING>(~them);
+    Bitboard occupied = pos.pieces() ^ pos.duck_square();  // Lift the duck
     Bitboard safe     = ~Bitboard(0);
 
-    if (!pos.pieces(us, KING))
+    // If we captured their king, the game is over and every square is safe
+    if (!pos.pieces(them, KING))
         return safe;
 
-    for (Bitboard b = pos.attackers_to(ksq, occupied) & pos.pieces(us); b;)
-        safe &= Attacks::between_bb(ksq, pop_lsb(b));
+    // The duck must block every attacker, and it can only block a slider, by
+    // standing between it and our king. between_bb() also includes the
+    // attacker's square, where the duck can't go, so an attack by a knight,
+    // pawn or king leaves no safe square.
+    for (Bitboard attackers = pos.attackers_to(ksq, occupied) & pos.pieces(them); attackers;)
+        safe &= Attacks::between_bb(ksq, pop_lsb(attackers));
 
     return safe;
 }
@@ -602,10 +607,10 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // Step 17. Make the move
         do_move(pos, move, st, ss);
 
-        // Duck or Die. A move that leaves our king capturable loses at the
-        // opponent's next move, unless the position is already a draw: score
-        // it as such without searching it. The duck squares that keep the king
-        // safe are found once per chess move.
+        // Duck or Die. There is no check in duck chess: if our move leaves our
+        // king attacked, the opponent captures it and wins. Score such a move
+        // as that loss (mated in 2 plies) without searching it, unless the
+        // position after it is already a draw by repetition or the 50-move rule.
         if (move.chess_move() != safeDucksMove)
         {
             safeDucksMove = move.chess_move();
@@ -895,8 +900,9 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         if (!capture)
             continue;
 
-        // Step 7. Make and search the move. A capture that leaves our king
-        // capturable loses, as in the main search (Duck or Die).
+        // Step 7. Make and search the move. As in the main search (Duck or
+        // Die), a capture that leaves our king attacked is scored as a loss
+        // without searching it.
         do_move(pos, move, st, ss);
 
         if (move.chess_move() != safeDucksMove)
