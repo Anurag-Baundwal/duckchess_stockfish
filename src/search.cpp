@@ -752,15 +752,22 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     bestMove  = Move::none();
     moveCount = 0;
 
+    // Check for the available remaining time. Unlike in chess, one qsearch can
+    // take longer than a fast time control: each capture comes with every duck
+    // square.
+    if (is_mainthread())
+        main_manager()->check_time(*this);
+
     // Used to send selDepth info to GUI (selDepth counts from 1, ply from 0)
     if (PvNode && selDepth < ss->ply + 1)
         selDepth = ss->ply + 1;
 
-    // Step 2. Check for a captured king, an immediate draw or maximum ply reached
+    // Step 2. Check for a captured king, aborted search, immediate draw or
+    // maximum ply reached
     if (!pos.pieces(pos.side_to_move(), KING))
         return mated_in(ss->ply);
 
-    if (pos.is_draw(ss->ply) || ss->ply >= MAX_PLY)
+    if (threads.stop.load(std::memory_order_relaxed) || pos.is_draw(ss->ply) || ss->ply >= MAX_PLY)
         return ss->ply >= MAX_PLY ? evaluate(pos) : VALUE_DRAW;
 
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
@@ -836,6 +843,11 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         undo_move(pos, move);
 
         assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
+
+        // If the search was stopped, the value cannot be trusted: return at
+        // once, without updating the best move, the PV or the TT
+        if (threads.stop.load(std::memory_order_relaxed))
+            return VALUE_ZERO;
 
         // Step 8. Check for a new best move
         if (value > bestValue)
