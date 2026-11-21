@@ -772,6 +772,9 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
+    // Test base without a quiescence search: the static evaluation
+    return evaluate(pos);
+
     // Step 3. Transposition table lookup
     posKey                         = pos.key();
     auto [ttHit, ttData, ttWriter] = tt.probe(posKey);
