@@ -31,7 +31,6 @@ class Position;
 enum GenType {
     CAPTURES,
     QUIETS,
-    EVASIONS,
     ALL
 };
 

@@ -35,8 +35,6 @@ enum Stages : i8 {
     QUIET,
 
     QSEARCH,
-
-    EVASION,
 };
 
 namespace {
@@ -137,14 +135,10 @@ void partial_insertion_sort(ExtMove* begin, ExtMove* end, int limit) {
 MovePicker::MovePicker(const Position& p, Move ttm, Depth depth, const ButterflyHistory* mh) :
     pos(p),
     mainHistory(mh),
-    ttMove(ttm) {
+    ttMove(ttm && p.legal(ttm) ? ttm : Move::none()) {
 
-    if (pos.checkers())
-        first_stage = EVASION;
-    else
-        first_stage = depth > 0 ? CAPTURE : QSEARCH;
-
-    stage = ttm && pos.legal(ttm) ? TT : INIT_FIRST_STAGE;
+    first_stage = depth > 0 ? CAPTURE : QSEARCH;
+    stage       = ttMove ? TT : INIT_FIRST_STAGE;
 }
 
 // Assigns a numerical value to each move in a list, used for sorting.
@@ -153,7 +147,7 @@ MovePicker::MovePicker(const Position& p, Move ttm, Depth depth, const Butterfly
 template<GenType Type>
 ExtMove* MovePicker::generate_and_score() {
 
-    static_assert(Type == CAPTURES || Type == QUIETS || Type == EVASIONS, "Wrong type");
+    static_assert(Type == CAPTURES || Type == QUIETS, "Wrong type");
 
     Color us = pos.side_to_move();
 
@@ -168,51 +162,52 @@ ExtMove* MovePicker::generate_and_score() {
         if constexpr (Type == CAPTURES)
             m.value = PieceValue[pos.piece_on(m.to_sq())] - type_of(pos.moved_piece(m));
 
-        else if constexpr (Type == QUIETS)
+        else  // Type == QUIETS
             m.value = (*mainHistory)[us][m.chess_raw()];
-
-        else  // Type == EVASIONS
-        {
-            if (pos.capture_stage(m))
-                m.value = PieceValue[pos.piece_on(m.to_sq())] + (1 << 28);
-            else
-                m.value = (*mainHistory)[us][m.chess_raw()];
-        }
     }
     return it;
 }
 
-// Returns the next move of the current stage. This never returns the TT move,
-// as it was emitted before.
-Move MovePicker::select() {
-
-    for (; cur < endCur; ++cur)
-        if (*cur != ttMove)
-            return *cur++;
-
-    return Move::none();
-}
+// Returns the next chess move of the current stage
+Move MovePicker::select() { return cur < endCur ? *cur++ : Move::none(); }
 
 // This is the most important method of the MovePicker class. We emit one
-// new legal move on every call until there are no more moves left,
-// picking the move with the highest score from a list of generated moves.
+// new legal move on every call until there are no more moves left: the TT
+// move first, then each chess move with every duck square in turn.
 Move MovePicker::next_move() {
+
+    if (stage == TT)
+    {
+        stage = INIT_FIRST_STAGE;
+        return ttMove;
+    }
+
+    while (true)
+    {
+        // The duck squares of the current chess move, in square order. This
+        // never returns the TT move, as it was emitted before.
+        while (duckSquares)
+            if (Move m = chessMove.with_duck(pop_lsb(duckSquares)); m != ttMove)
+                return m;
+
+        if (!(chessMove = next_chess_move()))
+            return Move::none();
+
+        duckSquares = pos.duck_targets(chessMove);
+    }
+}
+
+// Returns the next chess move, picking the move with the highest score from a
+// list of generated moves
+Move MovePicker::next_chess_move() {
 
 dispatch:
     switch (stage)
     {
 
-    case TT :
-        stage = INIT_FIRST_STAGE;
-        return ttMove;
-
     case INIT_FIRST_STAGE :
-        cur = moves;
-
-        if (first_stage == EVASION)
-            endCur = generate_and_score<EVASIONS>();
-        else
-            endCur = generate_and_score<CAPTURES>();
+        cur    = moves;
+        endCur = generate_and_score<CAPTURES>();
 
         partial_insertion_sort(cur, endCur, std::numeric_limits<int>::min());
 
@@ -233,7 +228,6 @@ dispatch:
 
     case QUIET :
     case QSEARCH :
-    case EVASION :
         return select();
 
     default :

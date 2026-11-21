@@ -55,8 +55,6 @@ Value interpolate(TaperedScore s, int phase) {
 // and piece-square tables, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
-    assert(!pos.checkers());
-
     Value v = interpolate(pos.psq_score(), game_phase(pos));
     v       = pos.side_to_move() == WHITE ? v : -v;
 
@@ -74,9 +72,6 @@ Value Eval::evaluate(const Position& pos) {
 // descriptions and values of each evaluation term. Useful for debugging.
 // Trace scores are from white's point of view
 std::string Eval::trace(Position& pos) {
-
-    if (pos.checkers())
-        return "Final evaluation: none (in check)";
 
     TaperedScore s     = pos.psq_score();
     int          phase = game_phase(pos);

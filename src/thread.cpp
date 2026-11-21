@@ -209,17 +209,23 @@ void ThreadPool::start_thinking(Position& pos, StateListPtr& states, Search::Lim
 
     Search::RootMoves rootMoves;
 
-    for (const auto& uciMove : limits.searchmoves)
+    // A side whose king was captured has no moves
+    if (pos.pieces(pos.side_to_move(), KING))
     {
-        auto move = UCIEngine::to_move(pos, uciMove);
+        for (const auto& uciMove : limits.searchmoves)
+        {
+            auto move = UCIEngine::to_move(pos, uciMove);
 
-        if (move != Move::none())
-            rootMoves.emplace_back(move);
+            if (move != Move::none())
+                rootMoves.emplace_back(move);
+        }
+
+        // Every chess move, with each square the duck can go to after it
+        if (rootMoves.empty())
+            for (const auto& m : MoveList<ALL>(pos))
+                for (Bitboard b = pos.duck_targets(m); b;)
+                    rootMoves.emplace_back(m.with_duck(pop_lsb(b)));
     }
-
-    if (rootMoves.empty())
-        for (const auto& m : MoveList<ALL>(pos))
-            rootMoves.emplace_back(m);
 
     // After ownership transfer 'states' becomes empty, so if we stop the search
     // and call 'go' again without setting a new position states.get() == nullptr.

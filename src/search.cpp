@@ -93,10 +93,11 @@ void Search::Worker::start_searching() {
     tt.new_search();
     main_manager()->updates.onStart();
 
+    // Without a move, the side to move has won, unless its king was captured
     if (rootMoves.empty())
     {
         main_manager()->updates.onUpdateNoMoves(
-          {0, {rootPos.checkers() ? -VALUE_MATE : VALUE_DRAW, rootPos}});
+          {0, {rootPos.pieces(rootPos.side_to_move(), KING) ? VALUE_MATE : -VALUE_MATE, rootPos}});
         main_manager()->updates.onBestmove(UCIEngine::move(Move::none()), "");
         return;
     }
@@ -440,15 +441,14 @@ bool Search::Worker::iterative_deepening() {
 }
 
 
-void Search::Worker::do_move(
-  Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss) {
+void Search::Worker::do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss) {
     // prefetch_key() does not model castling, en passant or promotion exactly.
     // For these rare moves the prefetch lands on an unused line.
     prefetch(tt.get_cluster(pos.prefetch_key(move)));
 
     ++nodes;
 
-    pos.do_move(move, st, givesCheck);
+    pos.do_move(move, st);
 
     ss->currentMove = move;
 }
@@ -473,14 +473,6 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     if (depth <= 0)
         return qsearch<PvNode ? PV : NonPV>(pos, ss, alpha, beta);
 
-    // Check if we have an upcoming move that draws by repetition
-    if (!rootNode && alpha < VALUE_DRAW && pos.upcoming_repetition(ss->ply))
-    {
-        alpha = value_draw(nodes);
-        if (alpha >= beta)
-            return alpha;
-    }
-
     assert(-VALUE_INFINITE <= alpha && alpha < beta && beta <= VALUE_INFINITE);
     assert(PvNode || (alpha == beta - 1));
     assert(0 < depth && depth < MAX_PLY);
@@ -491,13 +483,12 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     Key   posKey;
     Move  move, bestMove;
     Value bestValue, value;
-    bool  givesCheck, capture;
+    bool  capture;
 
     SearchedList quietsSearched;
 
     // Step 1. Initialize node
-    ss->inCheck = pos.checkers();
-    bestValue   = -VALUE_INFINITE;
+    bestValue = -VALUE_INFINITE;
 
     // Check for the available remaining time
     if (is_mainthread())
@@ -509,10 +500,13 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     if (!rootNode)
     {
-        // Step 2. Check for aborted search or immediate draw
+        // Step 2. Check for a captured king, aborted search or immediate draw
+        if (!pos.pieces(pos.side_to_move(), KING))
+            return mated_in(ss->ply);
+
         if (threads.stop.load(std::memory_order_relaxed) || pos.is_draw(ss->ply)
             || ss->ply >= MAX_PLY)
-            return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos) : value_draw(nodes);
+            return ss->ply >= MAX_PLY ? evaluate(pos) : value_draw(nodes);
 
         // Step 3. Mate distance pruning. Even if we mate at the next move our score
         // would be at best mate_in(ss->ply + 1), but if alpha is already bigger because
@@ -571,13 +565,12 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         if (PvNode)
             (ss + 1)->pv = nullptr;
 
-        capture    = pos.capture_stage(move);
-        givesCheck = pos.gives_check(move);
+        capture = pos.capture_stage(move);
 
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
         // Step 17. Make the move
-        do_move(pos, move, st, givesCheck, ss);
+        do_move(pos, move, st, ss);
 
         // Step 19. Principal variation search: every move except the first one
         // of a PV node is searched with a null window around alpha.
@@ -689,20 +682,20 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
             }
         }
 
-        // If the move is worse than some previously searched move,
-        // remember it, to update its stats later.
-        if (move != bestMove && !capture && moveCount <= SEARCHEDLIST_CAPACITY)
-            quietsSearched.push_back(move);
+        // If the move is worse than some previously searched move, remember its
+        // chess move, once, to update its stats later.
+        if (move != bestMove && !capture && quietsSearched.size() < SEARCHEDLIST_CAPACITY
+            && std::find(quietsSearched.begin(), quietsSearched.end(), move.chess_move())
+                 == quietsSearched.end())
+            quietsSearched.push_back(move.chess_move());
     }
 
-    // Step 23. Check for mate and stalemate, otherwise update the quiet history
+    // Step 23. Check for a position without moves, otherwise update the quiet history
 
-    assert(moveCount || !ss->inCheck || !MoveList<ALL>(pos).size());
-
-    // All legal moves have been searched: if there are no legal moves, it
-    // must be a mate or a stalemate.
+    // All legal moves have been searched: without a chess move, the side to
+    // move has won.
     if (!moveCount)
-        bestValue = ss->inCheck ? mated_in(ss->ply) : VALUE_DRAW;
+        bestValue = mate_in(ss->ply);
 
     // If there is a move that produces search value greater than alpha,
     // we update the stats of searched moves.
@@ -740,21 +733,13 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     assert(alpha >= -VALUE_INFINITE && alpha < beta && beta <= VALUE_INFINITE);
     assert(PvNode || (alpha == beta - 1));
 
-    // Check if we have an upcoming move that draws by repetition
-    if (alpha < VALUE_DRAW && pos.upcoming_repetition(ss->ply))
-    {
-        alpha = value_draw(nodes);
-        if (alpha >= beta)
-            return alpha;
-    }
-
     PVMoves   pv;
     StateInfo st;
 
     Key   posKey;
     Move  move, bestMove;
     Value bestValue, value;
-    bool  givesCheck, capture;
+    bool  capture;
     int   moveCount;
 
     // Step 1. Initialize node
@@ -764,17 +749,19 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         ss->pv->clear();
     }
 
-    bestMove    = Move::none();
-    ss->inCheck = pos.checkers();
-    moveCount   = 0;
+    bestMove  = Move::none();
+    moveCount = 0;
 
     // Used to send selDepth info to GUI (selDepth counts from 1, ply from 0)
     if (PvNode && selDepth < ss->ply + 1)
         selDepth = ss->ply + 1;
 
-    // Step 2. Check for an immediate draw or maximum ply reached
+    // Step 2. Check for a captured king, an immediate draw or maximum ply reached
+    if (!pos.pieces(pos.side_to_move(), KING))
+        return mated_in(ss->ply);
+
     if (pos.is_draw(ss->ply) || ss->ply >= MAX_PLY)
-        return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos) : VALUE_DRAW;
+        return ss->ply >= MAX_PLY ? evaluate(pos) : VALUE_DRAW;
 
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
@@ -792,46 +779,40 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     // Step 4. Static evaluation of the position
     Value staticEval = VALUE_NONE;
-    if (ss->inCheck)
-        bestValue = -VALUE_INFINITE;
-    else
+    if (ttHit)
     {
-        if (ttHit)
-        {
-            // Never assume anything about values stored in TT
-            staticEval = ttData.eval;
+        // Never assume anything about values stored in TT
+        staticEval = ttData.eval;
 
-            if (!is_valid(staticEval))
-                staticEval = evaluate(pos);
+        if (!is_valid(staticEval))
+            staticEval = evaluate(pos);
 
-            bestValue = staticEval;
+        bestValue = staticEval;
 
-            // ttValue can be used as a better position evaluation
-            if (is_valid(ttData.value) && !is_decisive(ttData.value)
-                && (ttData.bound & (ttData.value > bestValue ? BOUND_LOWER : BOUND_UPPER)))
-                bestValue = ttData.value;
-        }
-        else
-            staticEval = bestValue = evaluate(pos);
+        // ttValue can be used as a better position evaluation
+        if (is_valid(ttData.value) && !is_decisive(ttData.value)
+            && (ttData.bound & (ttData.value > bestValue ? BOUND_LOWER : BOUND_UPPER)))
+            bestValue = ttData.value;
+    }
+    else
+        staticEval = bestValue = evaluate(pos);
 
-        // Stand pat. Return immediately if static value is at least beta
-        if (bestValue >= beta)
-        {
-            assert(!is_decisive(bestValue));
+    // Stand pat. Return immediately if static value is at least beta
+    if (bestValue >= beta)
+    {
+        assert(!is_decisive(bestValue));
 
-            if (!ttHit)
-                ttWriter.write(posKey, VALUE_NONE, false, BOUND_LOWER, DEPTH_UNSEARCHED,
-                               Move::none(), staticEval, tt.generation());
-            return bestValue;
-        }
-
-        if (bestValue > alpha)
-            alpha = bestValue;
+        if (!ttHit)
+            ttWriter.write(posKey, VALUE_NONE, false, BOUND_LOWER, DEPTH_UNSEARCHED, Move::none(),
+                           staticEval, tt.generation());
+        return bestValue;
     }
 
+    if (bestValue > alpha)
+        alpha = bestValue;
+
     // Initialize a MovePicker object for the current position, and prepare
-    // to search the moves. We presently use two stages of move generator in
-    // quiescence search: captures, or evasions only when in check.
+    // to search the moves: the captures, each with every duck square.
     MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory);
 
     // Step 5. Loop through all legal moves until no moves remain
@@ -840,18 +821,16 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     {
         assert(move.is_ok());
 
-        givesCheck = pos.gives_check(move);
-        capture    = pos.capture_stage(move);
+        capture = pos.capture_stage(move);
 
         moveCount++;
 
-        // Step 6. Skip non-captures, unless all moves searched so far lose
-        // (when in check, at least one evasion is searched)
-        if (!is_loss(bestValue) && !capture)
+        // Step 6. Skip non-captures (a quiet TT move)
+        if (!capture)
             continue;
 
         // Step 7. Make and search the move
-        do_move(pos, move, st, givesCheck, ss);
+        do_move(pos, move, st, ss);
 
         value = -qsearch<nodeType>(pos, ss + 1, -beta, -alpha);
         undo_move(pos, move);
@@ -879,23 +858,14 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         }
     }
 
-    // Step 9. Check for mate and stalemate
-    // All legal moves have been searched. A special case: if we are
-    // in check and no legal moves were found, it is checkmate.
+    // Step 9. Check for a position without moves, which the side to move has
+    // won. Only check it under specific conditions.
     if (!moveCount)
     {
-        if (ss->inCheck)  // Checkmate!
-        {
-            assert(!MoveList<ALL>(pos).size());
-            return mated_in(ss->ply);  // Plies to mate from the root
-        }
-
-        // Only check for stalemate under specific conditions
         Color us = pos.side_to_move();
         if (!(pawn_single_push_bb(us, pos.pieces(us, PAWN)) & ~pos.pieces())
-            && !pos.non_pawn_material(us) && type_of(pos.captured_piece()) >= KNIGHT
-            && !MoveList<ALL>(pos).size())
-            bestValue = VALUE_DRAW;
+            && !pos.non_pawn_material(us) && !MoveList<ALL>(pos).size())
+            bestValue = mate_in(ss->ply);
     }
 
     // Step 10. Save gathered info in transposition table
@@ -972,8 +942,8 @@ Value value_from_tt(Value v, int ply, int r50c) {
 
 
 // Updates the butterfly history at the end of search() when a bestMove is found:
-// a bonus for the best move if it is quiet, and a malus of the same size for the
-// quiet moves searched before it.
+// a bonus for the best chess move if it is quiet, and a malus of the same size
+// for the other quiet chess moves searched before it.
 void update_all_stats(const Position& pos,
                       Search::Worker& workerThread,
                       Move            bestMove,
@@ -990,7 +960,8 @@ void update_all_stats(const Position& pos,
 
     // Decrease stats for all non-best quiet moves
     for (Move move : quietsSearched)
-        workerThread.mainHistory[us][move.chess_raw()] << -bonus;
+        if (move != bestMove.chess_move())
+            workerThread.mainHistory[us][move.chess_raw()] << -bonus;
 }
 }
 
