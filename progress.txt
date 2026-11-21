@@ -533,12 +533,31 @@ Journal
       bench 60 s. Without a TT move, each node searches every chess move
       with every duck square.
 
+2026-11-21  6    Results and merges                                701e4142
+  test  branch               Elo           games  merged as
+  178   tm-max-2x-optimum    +108.8 +- 20  1052   f7c053cf
+  179   duck-history          +61.0 +- 15  1710   cdefbad9
+  180   master vs no-qsearch +659   +- 162  476   (check only)
+  181   duck-or-die          +215.6 +- 30   640   d3a7237b
+  All passed SPRT [0, 3], no crashes or time losses on x86 or ARM (181 ran
+  on x86 only). Each was tested against the master of its day and applied
+  on top of the earlier merges; the combined bench is 19587836.
+  - Duck or Die (d3a7237b): a move that leaves our king attacked is scored
+    as mated in 2 plies without a search, unless the position is a draw.
+    The duck squares that keep the king safe are found once per chess
+    move: checking each move instead cost 8% nps, this costs nothing
+    measurable. A first version scored a winning king capture at the root
+    as a loss when other pieces still attacked our king; fixed before the
+    test. 60 debug-build games at 20k nodes: no assertion failures.
+  - 701e4142 rewrote the Duck or Die comments to say plainly what they do
+    (the user found them hard to follow; wakwak's are the model).
+
 
 Next steps
 ----------
-1. Watch tests 178, 179 and 180, and the errors page (ARM especially).
-   Merge a passed branch into master with its "Passed STC" block.
-2. Phase 6, one SPRT per improvement: Duck or Die (a move that leaves the
-   opponent able to capture our king loses), king captures ordered first,
-   then late duck pruning and the rest of wakwak's gains, interleaved with
-   Stockfish's search features (RFP, NMP, LMR) in stockfish_4pc's order.
+1. duck-refutations (wakwak's duck refutations): rebased on master, bench
+   4956461 (-75% nodes), debug games, then an SPRT.
+2. Phase 6, one SPRT per improvement: late duck pruning (now that ducks
+   are ordered by history) and the rest of wakwak's gains, interleaved
+   with Stockfish's search features (RFP, NMP, LMR) in stockfish_4pc's
+   order. Comments in Stockfish style, and plain enough to follow.
