@@ -242,4 +242,7 @@ dispatch:
     }
 }
 
+// Skips the remaining duck squares of the current chess move
+void MovePicker::skip_ducks() { duckIdx = SQUARE_NB; }
+
 }  // namespace Stockfish

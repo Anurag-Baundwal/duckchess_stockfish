@@ -45,6 +45,7 @@ class MovePicker {
     MovePicker& operator=(const MovePicker&) = delete;
     MovePicker(const Position&, Move, Depth, const ButterflyHistory*, const DuckHistory*);
     Move next_move();
+    void skip_ducks();
 
    private:
     Move next_chess_move();
