@@ -49,14 +49,57 @@ Value interpolate(TaperedScore s, int phase) {
     return (mg_value(s) * phase + eg_value(s) * (PhaseMidgame - phase)) / PhaseMidgame;
 }
 
+// Penalty per unit of king danger squared (wakwak's 45 and 30 centipawns)
+constexpr TaperedScore DuckShield = make_score(70, 68);
+
+// Duck shield, as in wakwak: returns how many attacks on the king of the side
+// to move its duck can't block. The side to move is about to move the duck, so
+// it counts as lifted. An attack by a knight, pawn or king, or by a slider
+// next to the king, can't be blocked. Of the slider attacks from further away,
+// the duck blocks one. With any danger left, the move must deal with the
+// attacks itself, or the king is lost.
+int king_danger(const Position& pos) {
+
+    Color us = pos.side_to_move();
+
+    if (!pos.pieces(us, KING))
+        return 0;
+
+    Square   ksq      = pos.square<KING>(us);
+    Bitboard occupied = pos.pieces();
+
+    if (pos.duck_square() != SQ_NONE)
+        occupied ^= pos.duck_square();
+
+    int unblockable = 0, blockable = 0;
+
+    for (Bitboard attackers = pos.attackers_to(ksq, occupied) & pos.pieces(~us); attackers;)
+    {
+        // between_bb() includes the attacker's square, so nothing lies
+        // between them if that is all it holds
+        Square s = pop_lsb(attackers);
+        if (Attacks::between_bb(ksq, s) == square_bb(s))
+            ++unblockable;
+        else
+            ++blockable;
+    }
+
+    return unblockable + std::max(blockable - 1, 0);
+}
+
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, tapered by the game phase.
+// and piece-square tables, and the danger to the king of the side to move,
+// tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
-    Value v = interpolate(pos.psq_score(), game_phase(pos));
-    v       = pos.side_to_move() == WHITE ? v : -v;
+    int   phase  = game_phase(pos);
+    int   danger = king_danger(pos);
+    Value v      = interpolate(pos.psq_score(), phase);
+
+    v = pos.side_to_move() == WHITE ? v : -v;
+    v -= interpolate(DuckShield * (danger * danger), phase);
 
     // Damp down the evaluation linearly when shuffling
     v -= v * pos.rule50_count() / 189;
@@ -81,6 +124,9 @@ std::string Eval::trace(Position& pos) {
     std::stringstream ss;
     ss << "Material and PSQT        mg " << mg_value(s) << ", eg " << eg_value(s) << ", phase "
        << phase << "/" << PhaseMidgame << " (white side, internal units)\n";
+    ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
+       << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
+       << " (internal units)\n";
     ss << "Final evaluation         " << v << " (white side, internal units)\n";
     ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2);
     ss << "Final evaluation       " << 0.01 * UCIEngine::to_cp(v, pos) << " (white side)\n";
