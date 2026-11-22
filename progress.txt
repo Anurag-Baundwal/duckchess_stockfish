@@ -613,6 +613,8 @@ Next steps
    versions; when a pass gains less than expected, try a stronger version.
 2. Eval first (user, 2026-11-22): mobility (test 196), then more king
    safety and other Stockfish 11 terms; then LMR, NMP and RFP tweaks.
+   eval_plan.txt has the detailed plan (three terms, a texel tune on
+   self-play games, then the search TODO); start it once 195 and 197 end.
 3. Milestones: Fairy-Stockfish beaten; next, within 500-600 Elo of wakwak.
 4. LTCs of merged commits: base = a tag on the tested commit's parent
    (like pre-rfp), so OpenBench shows no rebase notice.

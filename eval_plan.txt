@@ -1,0 +1,181 @@
+Evaluation plan (written 2026-11-22, for a new session)
+=======================================================
+
+The handoff for the next stretch of work: three evaluation terms, then a
+texel tune on self-play games, then the search work at the end of this
+file. Read progress.txt ("Status", "Next steps") and AGENTS.md first.
+
+
+Start condition
+---------------
+
+Start only when the LTCs of the merged master changes have finished, since
+the new terms go on top of them:
+
+  - 195: duck shield LTC, master 0101abf5 vs rfp-sf11, 60+0.6 Hash 64.
+  - 197: RFP LTC, rfp-sf11 vs tag pre-rfp, 60+0.6 Hash 64.
+  - 196: mobility STC (branch mobility, 4b9bea13) should be decided too.
+    It stood at -17.2 +- 28.9 after 384 games.
+
+If an LTC fails, ask the user before reverting anything. All three were
+moved to priority 2 on 2026-11-22; new tests from this plan go in at
+priority 1 (the user's choice).
+
+
+Where things stand
+------------------
+
+  - Test 202, master f63674ab vs wakwak 0.10.0 (the last release before its
+    NNUE, 3675 COPE; fork Anurag-Baundwal/wakwak, branch openbench-v0.10):
+    -28.7 +- 34.6 after 412 games. So master is about as strong as wakwak
+    was before its NNUE.
+  - Test 199, master vs wakwak 1.0: -850 +- 196 (6 wins, 999 losses,
+    3 draws). The score is saturated: every non-loss came from an opening
+    lopsided in our favour, so -850 is a floor. By wakwak's own COPE list
+    the real gap is about 1650 (3675 -> 5331), mostly its NNUE.
+  - wakwak 0.10.0's evaluation (src/eval/eval.rs at its tag v0.10.0):
+      PeSTO piece-square tables and piece values (82/337/365/477/1025 mg,
+      94/281/297/512/936 eg), tempo 30/25 cp for the side to move,
+      pawn-defended pieces 8/6 cp each (PR #87, +44 Elo there), knight
+      outposts 12/8 cp (PR #86, +16), duck shield 45/30 cp.
+  - Ours (src/evaluate.cpp, src/psqt.cpp): Stockfish 11's tables and values,
+    duck shield S(140, 136), Stockfish's 50-move damping. Neither engine
+    ever tuned its tables for duck chess.
+
+Units: wakwak's centipawns convert to ours as mg x 128/82 and eg x 213/94
+(Stockfish 11's pawn is S(128, 213), PeSTO's 82/94). That is how wakwak's
+45/30 became S(70, 68) for the first duck shield.
+
+
+Step 1: three terms, one branch and one SPRT each
+-------------------------------------------------
+
+All three off the same master, in src/evaluate.cpp: evaluate() (from the
+side to move's view, like the duck shield) and a line in trace(), with the
+constants next to DuckShield. Use Stockfish 11's form where it has the term
+(repos6/Stockfish, tag sf_11, src/evaluate.cpp), as for RFP and mobility.
+
+  1. eval-tempo: a bonus for the side to move, Stockfish 11's Tempo form,
+     with wakwak's 30/25 cp converted.
+  2. eval-pawn-defended: as in wakwak PR #87: per side, its pieces standing
+     on squares its own pawns attack (pawn_attacks_bb), S(8, 6) cp each,
+     converted. Stockfish 11 has no exact equivalent; write it in its style.
+  3. eval-outposts: Stockfish 11's Outpost S(30, 21) (doubled for knights)
+     and ReachableOutpost S(32, 10): relative ranks 4-6, supported by an
+     own pawn, outside the enemy pawns' attack span. This contains wakwak's
+     knight outpost (PR #86). There is no pawn hash, so compute the attack
+     span directly.
+
+For each branch:
+  - clang-format (see AGENTS.md), then `stockfish.exe bench` for the commit's
+    Bench line.
+  - python tests/duck_perft_check.py must still pass (eval only).
+  - `eval` on a FEN and on its colour-mirror: the new term must flip sign.
+  - Commit message: what the term does for the engine, the credit
+    ("as in wakwak (PR #87, +44 Elo there)" or the Stockfish 11 origin).
+  - Push the branch to origin and create the OpenBench test: dev = branch,
+    base = master, STC 10+0.1, Threads=1 Hash=16, SPRT [0, 3], confidence
+    [0.20, 0.05], book Duck_DFRC.epd, priority 1.
+  - Merge a pass with the "Passed STC" block (see git log for the format),
+    and add the wakwak PR, if any, to the README's Acknowledgements list.
+
+
+Step 2: tuning data (start right away; runs during step 1)
+---------------------------------------------------------
+
+No datagen yet (the user's decision), so the data is self-play games:
+
+  - A local fastchess match, master vs master, at fixed nodes (about 20k
+    per move), with -pgnout, on Duck_DFRC.epd (repos7/openbench/Client/
+    Books) plus standard starts from wakwak's genfens command. Use the
+    worker's fastchess, repos7/openbench/Client/Runners/
+    fastchess-cfa3671a4488/fastchess.exe, with C:/msys64/ucrt64/bin first
+    on PATH (it needs MSYS2's DLLs) and -variant duck960 (duck for
+    standard starts). Time 100 games first, then size the run to a few
+    hours, leaving cores for the laptop's OpenBench worker.
+  - Plus the self-play games already in repos7/openbench/Client/PGNs, about
+    5,150 from SPRT tests 186-197. Their comments hold each move's score
+    and depth ({+0.64/5 0.104s}).
+  - Never use games against wakwak or Fairy-Stockfish (tests 190, 199,
+    200, 201, 202): their results are lopsided, and training on wakwak's
+    games is the line the engine community cares about.
+
+
+Step 3: texel tune (after step 1's SPRTs are decided)
+----------------------------------------------------
+
+Adapt the stockfish_4pc tools in repos7/hce-texel-tune (README.txt;
+featfile.patch, linear_params.py, fit_linear.py, apply_linear.py) into a new
+local folder, not committed:
+
+  - PGN -> positions: skip book plies, game ends, mate scores and positions
+    whose played move is a capture; remove duplicates; hold out 10%.
+  - An engine command (patch, never committed) that writes the linear
+    features of the current evaluation per position: piece-square counts mg
+    and eg with the phase, tempo, defended pieces, outposts, the duck
+    shield's danger squared.
+  - Fit K first, then a logistic fit of all terms together. Target =
+    0.5 * game result + 0.5 * sigmoid(search score from the PGN comment),
+    as in the 4pc tune. Fit the tables in rank + file form first (one value
+    per square overfits). Keep the piece values fixed: they also set the
+    phase and SEE.
+  - Apply the result as branch eval-texel and test it: STC vs master at
+    priority 1, then an LTC (60+0.6, Hash 64).
+  - Retune whenever terms are added later.
+
+
+Later: search work (not yet; the user will say when)
+---------------------------------------------------
+
+What master's search has: PVS, TT, qsearch, reverse futility pruning in
+Stockfish 11's form, the butterfly history, duck history, duck refutations
+(also in qsearch), late duck pruning v2, Duck or Die, mate distance pruning,
+and Stockfish's time management with the 2x-optimum cap.
+
+What wakwak 0.10.0 already had that master doesn't (its SPRT Elo; summed
+results overstate, and some won't transfer):
+  - Neutral duck pruning (#94, #95): ducks that restrict none of the
+    opponent's moves; keep the best one per chess move. +75, +14.
+  - Duckless hashing (#66): a second TT probe with the duck left out of
+    the key; use the stored move if it is legal here. +64.
+  - Aspiration windows. +35.
+  - Duck count pruning (#73, #75): cap chess moves searched per duck
+    square. +27, +12.6.
+  - IID (#85). +22. In Stockfish's form this is IIR.
+  - Null-move reductions (#71, #84): reduce after a null-move fail-high.
+    +4.8, +11.
+  - Duck-stability time management (#104): more time while the chosen duck
+    square keeps changing. +11.5.
+  - LMR: plain PVS + LMR (#57) was only +11.5 there; then non-PV LMR
+    (#102) and log-depth LMR (#108).
+  - Continuation histories (#65, #67) and correction histories (#64,
+    nonpawn).
+
+Later wakwak additions (after 0.10.0): duck-aware SEE (#142, +66),
+futility pruning (#113, +10.5), "exact" LMR (#114, +14.7), unique duck
+pruning (#147, #151, #203), unique move pruning and LMR (#154, #155), quiet
+duck history (#158), duck count history (#211), not penalising the best
+move's duck or chess move (#107, #109, #110), scoring chess moves before
+splitting ducks (#229, a speedup). Its repetition bug (#214: repetitions
+judged on the duckless hash) is worth checking against our is_draw.
+
+Stockfish features not in wakwak at all: cut-node tracking, ttPv,
+cutoffCnt, doDeeper/doShallower, capture LMR, ProbCut, low-ply / TT-move
+histories, effort-based time management. Analysis with details:
+repos7/duck_engine_analysis.md, section 2.
+
+Tried before, to revisit:
+  - 184 futility pruning (Stockfish 18's Step 5 + Step 9): failed, -299.
+    The pruned moves were king hunts that a material + PSQT eval can't
+    see. Retry once the evaluation sees king danger better.
+  - 193 RFP margin 150 (vs 24f02445): paused at -1.8 +- 18 / 768. The
+    user wants RFP tweaks after the eval work.
+  - wakwak notes: singular extensions lost at STC there.
+
+Order when the time comes: one SPRT per change, biggest expected gain
+first (neutral duck pruning, duckless hashing, aspiration windows), port
+ideas not code (wakwak is AGPL-3.0; credit it in comments, commit messages
+and the README).
+
+To measure progress against wakwak, test against a release we don't
+saturate (0.13.0, 4361 COPE, say) rather than 1.0.
