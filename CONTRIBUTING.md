@@ -1,7 +1,6 @@
 # Contributing to duckchess_stockfish
 
-Thanks for your interest. The full developer guidelines are in
-[AGENTS.md](AGENTS.md); in short:
+Thanks for your interest. In short:
 
 - Write code in Stockfish's style and keep its structure, so that upstream
   ideas port easily. Format with the repository's `.clang-format`.

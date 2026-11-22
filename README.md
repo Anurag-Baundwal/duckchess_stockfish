@@ -3,10 +3,7 @@
 duckchess_stockfish is a UCI engine for duck chess. It is a modified version
 of [Stockfish][stockfish-link]: it was forked from Stockfish master ff7cee42
 (28 October 2026) and has been changed for duck chess since 31 October 2026.
-The git history records each change.
-
-It is in early development: see [PLAN.md](PLAN.md) for the steps and
-[progress.txt](progress.txt) for where they stand.
+The git history records each change. It is in early development.
 
 ## Usage
 
