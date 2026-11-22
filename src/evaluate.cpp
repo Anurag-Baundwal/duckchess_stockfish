@@ -49,8 +49,8 @@ Value interpolate(TaperedScore s, int phase) {
     return (mg_value(s) * phase + eg_value(s) * (PhaseMidgame - phase)) / PhaseMidgame;
 }
 
-// Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
-constexpr TaperedScore DuckShield = make_score(140, 136);
+// Penalty per unit of king danger squared (three times wakwak's 45 and 30 centipawns)
+constexpr TaperedScore DuckShield = make_score(210, 204);
 
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
