@@ -581,11 +581,38 @@ Journal
     changes build defaults so OpenBench's plain make has duck chess).
 
 
+2026-11-22  6    Overnight SPRTs (190-197)                        0101abf5
+  test  branch               result                       merged as
+  190   master vs Fairy-SF   330-3-3 after 336, +747      (milestone 1)
+  191   duck-shield-2        +19.9 +- 8.1, 5136 games     0101abf5
+  192   rfp-sf11             +34.6 +- 10.9, 2934 games    24f02445
+  193   rfp-margin-150       paused, -1.8 +- 18, 768      -
+  194   duck-shield-3        stopped, -37.5 +- 28, 456    -
+  - Fairy-Stockfish beaten: fork Anurag-Baundwal/Fairy-Stockfish, branch
+    openbench (build defaults only), engine fairy_stockfish on OpenBench.
+    Test 190 was paused once the result was clear.
+  - Duck shield: wakwak's 45/30 cp gained about nothing (189, paused),
+    twice that +19.9 (merged), three times lost. Per ISA: x86 +10.5, ARM
+    +30.9.
+  - Reverse futility pruning in Stockfish 11's form, skipped when the side
+    to move's king is attacked (duck lifted), passed; Stockfish 18's form
+    had failed at -299. A lower margin (150) was flat and is paused: the
+    user wants eval work before more RFP tuning.
+  - Running: 195 duck shield LTC (master vs rfp-sf11), 196 mobility
+    (Stockfish 11's term), 197 RFP LTC (rfp-sf11 vs tag pre-rfp).
+  - OpenBench note: workload_length() counts 2 players x 38 moves for every
+    game, but duck games average 164 plies (2 x 82) and Teams games 4 x 38,
+    so Teams tests get about 1.5x their share; duck Workloads of 32 pairs
+    last ~40 minutes, so one duck test can hold every worker for hours. The
+    user chose not to change this for now.
+
+
 Next steps
 ----------
-1. Merge passing tests; retry failing ideas with modified versions; when a
-   test passes with less than expected, try a stronger version.
-2. Eval: king safety beyond the duck shield (attacks next to the king), then
-   search features (RFP once the eval allows it, LMR, NMP).
-3. Milestones: beat Fairy-Stockfish (test 190), then get within 500-600
-   Elo of wakwak.
+1. Watch 195, 196 and 197. Merge passes; retry failures with modified
+   versions; when a pass gains less than expected, try a stronger version.
+2. Eval first (user, 2026-11-22): mobility (test 196), then more king
+   safety and other Stockfish 11 terms; then LMR, NMP and RFP tweaks.
+3. Milestones: Fairy-Stockfish beaten; next, within 500-600 Elo of wakwak.
+4. LTCs of merged commits: base = a tag on the tested commit's parent
+   (like pre-rfp), so OpenBench shows no rebase notice.
