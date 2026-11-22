@@ -58,6 +58,23 @@ using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 // Add a small random component to draw evaluations to avoid 3-fold blindness
 Value value_draw(usize nodes) { return VALUE_DRAW - 1 + Value(nodes & 0x2); }
 
+// Futility margin, as in Stockfish 11
+Value futility_margin(Depth d, bool improving) { return Value(217 * (d - improving)); }
+
+// Whether a piece of the opponent attacks the king of the side to move, with
+// the duck lifted, as the side to move has to move it and may open the line.
+// This is duck chess's counterpart of being in check.
+bool king_attacked(const Position& pos) {
+
+    Color    us       = pos.side_to_move();
+    Bitboard occupied = pos.pieces();
+
+    if (pos.duck_square() != SQ_NONE)
+        occupied ^= pos.duck_square();
+
+    return pos.attackers_to(pos.square<KING>(us), occupied) & pos.pieces(~us);
+}
+
 // Called after we made a move: returns the squares where our duck keeps our
 // king safe from capture, given the chess move we played. The answer is the
 // same for every duck square of that chess move, so the search computes it
@@ -219,6 +236,9 @@ bool Search::Worker::iterative_deepening() {
     // Allocate stack with extra size to allow access from (ss - 7) to (ss + 2)
     Stack  stack[MAX_PLY + 10] = {};
     Stack* ss                  = stack + 7;
+
+    for (int i = 7; i > 0; --i)
+        (ss - i)->staticEval = VALUE_NONE;
 
     for (int i = 0; i <= MAX_PLY + 2; ++i)
         (ss + i)->ply = i;
@@ -533,7 +553,8 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
     Key   posKey;
     Move  move, bestMove;
-    Value bestValue, value;
+    Value bestValue, value, eval;
+    bool  improving;
     bool  capture;
 
     SearchedList quietsSearched;
@@ -583,6 +604,31 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     ttData.move  = rootNode ? rootMoves[pvIdx].pv[0] : ttHit ? ttData.move : Move::none();
     ttData.value = ttHit ? value_from_tt(ttData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
 
+    // Step 5. Static evaluation of the position
+    if (ttHit)
+    {
+        // Never assume anything about values stored in TT
+        ss->staticEval = eval = ttData.eval;
+        if (!is_valid(eval))
+            ss->staticEval = eval = evaluate(pos);
+
+        // ttValue can be used as a better position evaluation
+        if (is_valid(ttData.value)
+            && (ttData.bound & (ttData.value > eval ? BOUND_LOWER : BOUND_UPPER)))
+            eval = ttData.value;
+    }
+    else
+    {
+        ss->staticEval = eval = evaluate(pos);
+        ttWriter.write(posKey, VALUE_NONE, PvNode, BOUND_NONE, DEPTH_UNSEARCHED, Move::none(),
+                       ss->staticEval, tt.generation());
+    }
+
+    // Set up the improving flag, which is true if the current static evaluation
+    // is bigger than the previous static evaluation at our turn, and is false
+    // otherwise
+    improving = ss->staticEval > (ss - 2)->staticEval;
+
     // Step 6. At non-PV nodes we check for an early TT cutoff. Note that we
     //         always check the validity of the TT value because of access races.
     //         As a partial workaround for the graph history interaction problem,
@@ -594,6 +640,15 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         ss->reply = ttData.move;
         return ttData.value;
     }
+
+    // Step 9. Futility pruning: child node (reverse futility pruning), in
+    // Stockfish 11's form. If the static evaluation is above beta by a margin
+    // that grows with depth, assume that the search would fail high too, and
+    // return the evaluation. Not when the king of the side to move is attacked:
+    // the evaluation can't tell whether the king can be saved.
+    if (!PvNode && depth < 6 && eval - futility_margin(depth, improving) >= beta && !is_win(eval)
+        && !king_attacked(pos))
+        return eval;
 
     MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
 
@@ -843,15 +898,14 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     else if (bestMove)
         update_all_stats(pos, *this, bestMove, quietsSearched, ducksSearched, depth);
 
-    // Step 24. Write gathered information in transposition table. The main
-    // search does not compute a static evaluation, so none is saved.
+    // Step 24. Write gathered information in transposition table
     if (!(rootNode && pvIdx))
         ttWriter.write(posKey, value_to_tt(bestValue, ss->ply), PvNode,
                        bestValue >= beta    ? BOUND_LOWER
                        : PvNode && bestMove ? BOUND_EXACT
                                             : BOUND_UPPER,
                        moveCount != 0 ? depth : std::min(MAX_PLY - 1, depth + 6), bestMove,
-                       VALUE_NONE, tt.generation());
+                       ss->staticEval, tt.generation());
 
     // The search is now complete
     assert(-VALUE_INFINITE < bestValue && bestValue < VALUE_INFINITE);
