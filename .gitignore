@@ -18,3 +18,10 @@ tsan.supp
 __pycache__/
 tests/syzygy
 tests/bench_tmp.epd
+
+# Local working notes: plans, progress log and assistant instructions
+/AGENTS.md
+/CLAUDE.md
+/PLAN.md
+/eval_plan.txt
+/progress.txt
