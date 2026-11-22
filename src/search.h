@@ -109,6 +109,7 @@ struct Stack {
     PVMoves* pv;
     int      ply;
     Move     currentMove;
+    Value    staticEval;
     Move     reply;  // A good move here (it raised alpha, or the TT move of a
                      // TT cutoff): the reply to the move at the ply above
 };
