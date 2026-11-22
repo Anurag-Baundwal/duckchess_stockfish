@@ -264,6 +264,17 @@ constexpr TaperedScore operator-(TaperedScore s) { return TaperedScore(-int(s));
 inline TaperedScore&   operator+=(TaperedScore& s1, TaperedScore s2) { return s1 = s1 + s2; }
 inline TaperedScore&   operator-=(TaperedScore& s1, TaperedScore s2) { return s1 = s1 - s2; }
 
+// Multiplication of a TaperedScore by an integer. We check for overflow in debug mode.
+inline TaperedScore operator*(TaperedScore s, int i) {
+
+    TaperedScore result = TaperedScore(int(s) * i);
+
+    assert(eg_value(result) == (i * eg_value(s)));
+    assert(mg_value(result) == (i * mg_value(s)));
+    assert((i == 0) || (result / i) == s);
+    return result;
+}
+
 using Depth = int;
 
 // The following DEPTH_ constants are used for transposition table entries
