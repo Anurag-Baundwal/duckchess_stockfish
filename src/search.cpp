@@ -58,8 +58,8 @@ using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 // Add a small random component to draw evaluations to avoid 3-fold blindness
 Value value_draw(usize nodes) { return VALUE_DRAW - 1 + Value(nodes & 0x2); }
 
-// Futility margin, as in Stockfish 11
-Value futility_margin(Depth d, bool improving) { return Value(217 * (d - improving)); }
+// Futility margin (Stockfish 11 has 217 per ply)
+Value futility_margin(Depth d, bool improving) { return Value(150 * (d - improving)); }
 
 // Whether a piece of the opponent attacks the king of the side to move, with
 // the duck lifted, as the side to move has to move it and may open the line.
