@@ -43,6 +43,7 @@ opening book (Duck_DFRC.epd) and the match runner
       * late duck pruning (#45 and #46)
       * duck history (#42)
       * duck shield (#92)
+      * pawn-defended pieces (#87)
 
     The duck perft counts in tests/duck_perft.epd and the bench positions were
     made by running wakwak, and our OpenBench test setup follows wakwak's.
