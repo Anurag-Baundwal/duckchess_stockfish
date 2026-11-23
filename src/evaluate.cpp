@@ -49,8 +49,19 @@ Value interpolate(TaperedScore s, int phase) {
     return (mg_value(s) * phase + eg_value(s) * (PhaseMidgame - phase)) / PhaseMidgame;
 }
 
+// Bonus per piece on a square that its own pawns attack (wakwak's 8 and 6
+// centipawns)
+constexpr TaperedScore PawnDefended = make_score(12, 14);
+
 // Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
 constexpr TaperedScore DuckShield = make_score(140, 136);
+
+// Pawn-defended pieces, as in wakwak: returns how many pieces of the given
+// color, pawns and king included, stand on squares that its own pawns attack.
+template<Color Us>
+int pawn_defended(const Position& pos) {
+    return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
+}
 
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
@@ -90,13 +101,15 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, and the danger to the king of the side to move,
-// tapered by the game phase.
+// and piece-square tables, pawn-defended pieces, and the danger to the king of
+// the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
-    int   phase  = game_phase(pos);
-    int   danger = king_danger(pos);
-    Value v      = interpolate(pos.psq_score(), phase);
+    int          phase  = game_phase(pos);
+    int          danger = king_danger(pos);
+    TaperedScore score =
+      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos));
+    Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
     v -= interpolate(DuckShield * (danger * danger), phase);
@@ -124,6 +137,9 @@ std::string Eval::trace(Position& pos) {
     std::stringstream ss;
     ss << "Material and PSQT        mg " << mg_value(s) << ", eg " << eg_value(s) << ", phase "
        << phase << "/" << PhaseMidgame << " (white side, internal units)\n";
+    ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
+       << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
+       << eg_value(PawnDefended) << ")\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
