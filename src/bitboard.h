@@ -122,6 +122,27 @@ constexpr Bitboard pawn_attacks_bb(Bitboard b) {
                       : shift(b, SOUTH_WEST) | shift(b, SOUTH_EAST);
 }
 
+// Returns a bitboard representing all the squares on the adjacent files of the
+// given one.
+constexpr Bitboard adjacent_files_bb(Square s) {
+    return shift(file_bb(s), EAST) | shift(file_bb(s), WEST);
+}
+
+// Returns a bitboard representing the squares on the ranks in front of the
+// given one, from the point of view of the given color. For instance,
+// forward_ranks_bb(BLACK, SQ_D3) will return the 16 squares on ranks 1 and 2.
+constexpr Bitboard forward_ranks_bb(Color c, Square s) {
+    return c == WHITE ? ~Rank1BB << 8 * relative_rank(WHITE, s)
+                      : ~Rank8BB >> 8 * relative_rank(BLACK, s);
+}
+
+// Returns a bitboard representing all the squares that can be attacked by a
+// pawn of the given color when it moves along its file, starting from the
+// given square.
+constexpr Bitboard pawn_attack_span(Color c, Square s) {
+    return forward_ranks_bb(c, s) & adjacent_files_bb(s);
+}
+
 constexpr Bitboard pawn_single_push_bb(Color c, Bitboard b) {
     return shift(b, c == WHITE ? NORTH : SOUTH);
 }
