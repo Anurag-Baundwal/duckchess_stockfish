@@ -49,6 +49,9 @@ Value interpolate(TaperedScore s, int phase) {
     return (mg_value(s) * phase + eg_value(s) * (PhaseMidgame - phase)) / PhaseMidgame;
 }
 
+// Bonus for the side to move (wakwak's 30 and 25 centipawns)
+constexpr TaperedScore Tempo = make_score(47, 57);
+
 // Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
 constexpr TaperedScore DuckShield = make_score(140, 136);
 
@@ -90,8 +93,8 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, and the danger to the king of the side to move,
-// tapered by the game phase.
+// and piece-square tables, the danger to the king of the side to move and a
+// bonus for having the move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int   phase  = game_phase(pos);
@@ -100,6 +103,7 @@ Value Eval::evaluate(const Position& pos) {
 
     v = pos.side_to_move() == WHITE ? v : -v;
     v -= interpolate(DuckShield * (danger * danger), phase);
+    v += interpolate(Tempo, phase);
 
     // Damp down the evaluation linearly when shuffling
     v -= v * pos.rule50_count() / 189;
@@ -127,6 +131,8 @@ std::string Eval::trace(Position& pos) {
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
+    ss << "Tempo                    " << interpolate(Tempo, phase)
+       << " for the side to move (internal units)\n";
     ss << "Final evaluation         " << v << " (white side, internal units)\n";
     ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2);
     ss << "Final evaluation       " << 0.01 * UCIEngine::to_cp(v, pos) << " (white side)\n";
