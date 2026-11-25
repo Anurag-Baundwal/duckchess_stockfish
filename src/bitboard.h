@@ -122,6 +122,14 @@ constexpr Bitboard pawn_attacks_bb(Bitboard b) {
                       : shift(b, SOUTH_WEST) | shift(b, SOUTH_EAST);
 }
 
+// Returns the squares doubly attacked by pawns of the given color from the
+// squares in the given bitboard.
+template<Color C>
+constexpr Bitboard pawn_double_attacks_bb(Bitboard b) {
+    return C == WHITE ? shift(b, NORTH_WEST) & shift(b, NORTH_EAST)
+                      : shift(b, SOUTH_WEST) & shift(b, SOUTH_EAST);
+}
+
 constexpr Bitboard pawn_single_push_bb(Color c, Bitboard b) {
     return shift(b, c == WHITE ? NORTH : SOUTH);
 }
