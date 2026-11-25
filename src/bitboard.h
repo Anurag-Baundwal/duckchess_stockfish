@@ -122,6 +122,14 @@ constexpr Bitboard pawn_attacks_bb(Bitboard b) {
                       : shift(b, SOUTH_WEST) | shift(b, SOUTH_EAST);
 }
 
+// Returns a bitboard representing the squares on the ranks in front of the
+// given one, from the point of view of the given color. For instance,
+// forward_ranks_bb(BLACK, SQ_D3) will return the 16 squares on ranks 1 and 2.
+constexpr Bitboard forward_ranks_bb(Color c, Square s) {
+    return c == WHITE ? ~Rank1BB << 8 * relative_rank(WHITE, s)
+                      : ~Rank8BB >> 8 * relative_rank(BLACK, s);
+}
+
 constexpr Bitboard pawn_single_push_bb(Color c, Bitboard b) {
     return shift(b, c == WHITE ? NORTH : SOUTH);
 }
@@ -143,6 +151,13 @@ inline constexpr auto PawnPairBB = []() {
 constexpr Bitboard pawn_pair_bb(Square s) { return PawnPairBB[s]; }
 
 constexpr int edge_distance(File f) { return std::min(f, File(FILE_H - f)); }
+
+// Returns the distance between two squares, the number of king moves from one
+// to the other.
+constexpr int distance(Square x, Square y) {
+    return std::max(std::max(file_of(x), file_of(y)) - std::min(file_of(x), file_of(y)),
+                    std::max(rank_of(x), rank_of(y)) - std::min(rank_of(x), rank_of(y)));
+}
 
 template<typename T>
 constexpr int constexpr_popcount(T v) {
@@ -258,6 +273,13 @@ inline Square msb(Bitboard b) {
 inline Bitboard least_significant_square_bb(Bitboard b) {
     assert(b);
     return b & -b;
+}
+
+// Returns the most advanced square for the given color, requires a non-zero
+// bitboard.
+inline Square frontmost_sq(Color c, Bitboard b) {
+    assert(b);
+    return c == WHITE ? msb(b) : lsb(b);
 }
 
 // Finds and clears the least significant bit in a non-zero bitboard.

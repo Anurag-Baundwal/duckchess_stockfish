@@ -56,11 +56,113 @@ constexpr TaperedScore PawnDefended = make_score(12, 14);
 // Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
 constexpr TaperedScore DuckShield = make_score(140, 136);
 
+// clang-format off
+
+// ShelterStrength[distance from edge][rank] contains the bonus for our pawn
+// in front of our king, by the distance of its file from the edge and its
+// rank. Rank 0 means there is no pawn on that file. These are Stockfish 11's
+// values.
+constexpr Value ShelterStrength[int(FILE_NB) / 2][RANK_NB] = {
+  { -6, 81, 93,  58,  39,  18,   25 },
+  {-43, 61, 35, -49, -29, -11,  -63 },
+  {-10, 75, 23,  -2,  32,   3,  -45 },
+  {-39,-13,-29, -52, -48, -67, -166 }
+};
+
+// UnblockedStorm[distance from edge][rank] contains the penalty for an enemy
+// pawn on those files, by its rank, when no pawn of ours stands right in front
+// of it. Rank 0 means there is no enemy pawn on that file, or it is behind our
+// king. UnblockedStorm[0][1-2] covers an enemy pawn on the edge, likely
+// blocked by our king. These are Stockfish 11's values.
+constexpr Value UnblockedStorm[int(FILE_NB) / 2][RANK_NB] = {
+  { 85,-289,-166, 97, 50, 45, 50 },
+  { 46, -25, 122, 45, 37,-10, 20 },
+  { -6,  51, 168, 34, -2,-22,-14 },
+  {-15, -11, 101,  4, 11,-15,-29 }
+};
+
+// clang-format on
+
+// Penalty for an enemy pawn on our third rank, blocked by our pawn
+constexpr TaperedScore BlockedStorm = make_score(82, 82);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
 int pawn_defended(const Position& pos) {
     return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
+}
+
+// Returns the pawn shelter bonus and the pawn storm penalty for a king of the
+// given color on the given square, as in Stockfish 11. It looks at the king's
+// file and the two closest files, at our pawns and the enemy pawns that are not
+// behind the king.
+template<Color Us>
+TaperedScore evaluate_shelter(const Position& pos, Square ksq) {
+
+    constexpr Color Them = ~Us;
+
+    Bitboard b          = pos.pieces(PAWN) & ~forward_ranks_bb(Them, ksq);
+    Bitboard ourPawns   = b & pos.pieces(Us);
+    Bitboard theirPawns = b & pos.pieces(Them);
+
+    TaperedScore bonus = make_score(5, 5);
+
+    File center = std::clamp(file_of(ksq), FILE_B, FILE_G);
+    for (File f = File(center - 1); f <= File(center + 1); ++f)
+    {
+        b           = ourPawns & file_bb(f);
+        int ourRank = b ? relative_rank(Us, frontmost_sq(Them, b)) : 0;
+
+        b             = theirPawns & file_bb(f);
+        int theirRank = b ? relative_rank(Us, frontmost_sq(Them, b)) : 0;
+
+        int d = edge_distance(f);
+        bonus += make_score(ShelterStrength[d][ourRank], 0);
+
+        if (ourRank && (ourRank == theirRank - 1))
+            bonus -= BlockedStorm * int(theirRank == RANK_3);
+        else
+            bonus -= make_score(UnblockedStorm[d][theirRank], 0);
+    }
+
+    return bonus;
+}
+
+// King safety from the pawns, as in Stockfish 11: the pawn shelter and storm
+// score of the king's square, or of the square it castles to if that scores
+// better in the middlegame and it may still castle, and an endgame penalty by
+// the distance from the king to our closest pawn. The duck isn't considered:
+// it moves every turn.
+template<Color Us>
+TaperedScore king_shelter(const Position& pos) {
+
+    if (!pos.pieces(Us, KING))
+        return SCORE_ZERO;
+
+    Square ksq     = pos.square<KING>(Us);
+    auto   compare = [](TaperedScore a, TaperedScore b) { return mg_value(a) < mg_value(b); };
+
+    TaperedScore shelter = evaluate_shelter<Us>(pos, ksq);
+
+    // If we can castle use the bonus after castling if it is bigger
+    if (pos.can_castle(Us & KING_SIDE))
+        shelter = std::max(shelter, evaluate_shelter<Us>(pos, relative_square(Us, SQ_G1)), compare);
+
+    if (pos.can_castle(Us & QUEEN_SIDE))
+        shelter = std::max(shelter, evaluate_shelter<Us>(pos, relative_square(Us, SQ_C1)), compare);
+
+    // In endgame we like to bring our king near our closest pawn
+    Bitboard pawns       = pos.pieces(Us, PAWN);
+    int      minPawnDist = pawns ? 8 : 0;
+
+    if (pawns & Attacks::attacks_bb(KING, ksq))
+        minPawnDist = 1;
+    else
+        while (pawns)
+            minPawnDist = std::min(minPawnDist, distance(ksq, pop_lsb(pawns)));
+
+    return shelter - make_score(0, 16 * minPawnDist);
 }
 
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
@@ -101,14 +203,15 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, pawn-defended pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// and piece-square tables, pawn-defended pieces, the pawn shelter of the kings,
+// and the danger to the king of the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score =
-      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos));
+    TaperedScore score  = pos.psq_score()
+                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+                       + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -140,6 +243,10 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
+    ss << "King shelter             mg "
+       << mg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)) << ", eg "
+       << eg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos))
+       << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
