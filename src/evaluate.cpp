@@ -56,11 +56,48 @@ constexpr TaperedScore PawnDefended = make_score(12, 14);
 // Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
 constexpr TaperedScore DuckShield = make_score(140, 136);
 
+// PassedRank[Rank] contains the bonus for a passed pawn by its rank, and
+// PassedFile the penalty per file between it and the edge of the board. These
+// are Stockfish 11's values.
+constexpr TaperedScore PassedRank[RANK_NB] = {
+  make_score(0, 0),   make_score(10, 28),   make_score(17, 33),  make_score(15, 41),
+  make_score(62, 72), make_score(168, 177), make_score(276, 260)};
+constexpr TaperedScore PassedFile = make_score(11, 8);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
 int pawn_defended(const Position& pos) {
     return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
+}
+
+// Passed pawns, as in Stockfish 11: returns the bonus for the pawns of the
+// given color that no enemy pawn stands in front of or next to on their way to
+// promotion, by their rank, less a little for each file away from the edge. A
+// passed pawn with another pawn in front of it gets half. The duck doesn't
+// count, as it moves every turn.
+template<Color Us>
+TaperedScore passed_pawns(const Position& pos) {
+
+    TaperedScore score = SCORE_ZERO;
+
+    for (Bitboard b = pos.pieces(Us, PAWN); b;)
+    {
+        Square s = pop_lsb(b);
+
+        if (!pos.pawn_passed(Us, s))
+            continue;
+
+        TaperedScore bonus = PassedRank[relative_rank(Us, s)];
+
+        // Scale down the bonus when a pawn stands in front of it
+        if (pos.pieces(PAWN) & forward_file_bb(Us, s))
+            bonus = make_score(mg_value(bonus) / 2, eg_value(bonus) / 2);
+
+        score += bonus - PassedFile * edge_distance(file_of(s));
+    }
+
+    return score;
 }
 
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
@@ -101,14 +138,15 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, pawn-defended pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// and piece-square tables, pawn-defended pieces, passed pawns, and the danger
+// to the king of the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score =
-      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos));
+    TaperedScore score  = pos.psq_score()
+                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+                       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -140,6 +178,10 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
+    ss << "Passed pawns             mg "
+       << mg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)) << ", eg "
+       << eg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos))
+       << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
