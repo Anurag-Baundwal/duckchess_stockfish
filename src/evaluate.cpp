@@ -56,11 +56,36 @@ constexpr TaperedScore PawnDefended = make_score(12, 14);
 // Penalty per unit of king danger squared (twice wakwak's 45 and 30 centipawns)
 constexpr TaperedScore DuckShield = make_score(140, 136);
 
+// RookOnFile[semi-open/open] contains the bonuses for a rook on a file without
+// our pawns, and without any pawns. These are Stockfish 11's values.
+constexpr TaperedScore RookOnFile[] = {make_score(21, 4), make_score(47, 25)};
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
 int pawn_defended(const Position& pos) {
     return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
+}
+
+// Rooks on open files, as in Stockfish 11: returns the bonus for the rooks of
+// the given color that stand on a file without pawns of their color, larger if
+// the file has no enemy pawns either.
+template<Color Us>
+TaperedScore rooks_on_files(const Position& pos) {
+
+    constexpr Color Them = ~Us;
+
+    TaperedScore score = SCORE_ZERO;
+
+    for (Bitboard b = pos.pieces(Us, ROOK); b;)
+    {
+        Bitboard file = file_bb(pop_lsb(b));
+
+        if (!(pos.pieces(Us, PAWN) & file))
+            score += RookOnFile[!(pos.pieces(Them, PAWN) & file)];
+    }
+
+    return score;
 }
 
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
@@ -101,14 +126,15 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, pawn-defended pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// and piece-square tables, pawn-defended pieces, rooks on open files, and the
+// danger to the king of the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score =
-      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos));
+    TaperedScore score  = pos.psq_score()
+                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+                       + rooks_on_files<WHITE>(pos) - rooks_on_files<BLACK>(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -140,6 +166,10 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
+    ss << "Rooks on open files      mg "
+       << mg_value(rooks_on_files<WHITE>(pos) - rooks_on_files<BLACK>(pos)) << ", eg "
+       << eg_value(rooks_on_files<WHITE>(pos) - rooks_on_files<BLACK>(pos))
+       << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
