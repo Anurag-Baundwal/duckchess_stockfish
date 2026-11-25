@@ -170,6 +170,13 @@ constexpr Bitboard pawn_pair_bb(Square s) { return PawnPairBB[s]; }
 
 constexpr int edge_distance(File f) { return std::min(f, File(FILE_H - f)); }
 
+// Returns the distance between two squares, the number of king moves from one
+// to the other.
+constexpr int distance(Square x, Square y) {
+    return std::max(std::max(file_of(x), file_of(y)) - std::min(file_of(x), file_of(y)),
+                    std::max(rank_of(x), rank_of(y)) - std::min(rank_of(x), rank_of(y)));
+}
+
 template<typename T>
 constexpr int constexpr_popcount(T v) {
     static_assert(std::is_integral_v<T>, "constexpr_popcount is undefined for non-integral types");
@@ -284,6 +291,13 @@ inline Square msb(Bitboard b) {
 inline Bitboard least_significant_square_bb(Bitboard b) {
     assert(b);
     return b & -b;
+}
+
+// Returns the most advanced square for the given color, requires a non-zero
+// bitboard.
+inline Square frontmost_sq(Color c, Bitboard b) {
+    assert(b);
+    return c == WHITE ? msb(b) : lsb(b);
 }
 
 // Finds and clears the least significant bit in a non-zero bitboard.
