@@ -127,6 +127,9 @@ class Position {
     Piece    moved_piece(Move m) const;
     Piece    captured_piece() const;
 
+    // Piece specific
+    bool pawn_passed(Color c, Square s) const;
+
     // Doing and undoing moves
     void do_move(Move m, StateInfo& newSt);
     void undo_move(Move m);
@@ -289,6 +292,10 @@ inline int Position::game_ply() const { return gamePly; }
 inline int Position::rule50_count() const { return st->rule50; }
 
 inline bool Position::is_chess960() const { return chess960; }
+
+inline bool Position::pawn_passed(Color c, Square s) const {
+    return !(pieces(~c, PAWN) & passed_pawn_span(c, s));
+}
 
 inline bool Position::capture(Move m) const {
     assert(m.is_ok());
