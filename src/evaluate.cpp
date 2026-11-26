@@ -94,6 +94,23 @@ constexpr Value UnblockedStorm[int(FILE_NB) / 2][RANK_NB] = {
 // Penalty for an enemy pawn on our third rank, blocked by our pawn
 constexpr TaperedScore BlockedStorm = make_score(82, 82);
 
+// ThreatByMinor/ByRook[attacked PieceType] contains bonuses according to
+// which piece type attacks which one. Attacks on lesser pieces which are
+// pawn-defended are not considered. These are Stockfish 11's values.
+constexpr TaperedScore ThreatByMinor[PIECE_TYPE_NB] = {make_score(0, 0),    make_score(6, 32),
+                                                       make_score(59, 41),  make_score(79, 56),
+                                                       make_score(90, 119), make_score(79, 161)};
+
+constexpr TaperedScore ThreatByRook[PIECE_TYPE_NB] = {make_score(0, 0),   make_score(3, 44),
+                                                      make_score(38, 71), make_score(38, 61),
+                                                      make_score(0, 38),  make_score(51, 38)};
+
+// Bonus for our king attacking a weak enemy piece, and for an attacked enemy
+// piece that is not defended, or attacked twice and defended once.
+// Stockfish 11's values.
+constexpr TaperedScore ThreatByKing = make_score(24, 89);
+constexpr TaperedScore Hanging      = make_score(69, 36);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -230,6 +247,148 @@ TaperedScore king_shelter(const Position& pos) {
     return shelter - make_score(0, 16 * minPawnDist);
 }
 
+// Evaluation, as in Stockfish 11, computes the squares that each side attacks
+// and scores the threats on enemy pieces with them. The duck is lifted, as it
+// moves every turn and either side may place it next. Nothing is pinned in duck
+// chess, where a king may be left attacked, so every piece attacks all its
+// squares.
+class Evaluation {
+   public:
+    Evaluation()                             = delete;
+    Evaluation(const Evaluation&)            = delete;
+    Evaluation& operator=(const Evaluation&) = delete;
+
+    explicit Evaluation(const Position& p);
+    TaperedScore value() const { return threats<WHITE>() - threats<BLACK>(); }
+
+   private:
+    template<Color Us>
+    void initialize();
+    template<Color Us, PieceType Pt>
+    void pieces();
+    template<Color Us>
+    TaperedScore threats() const;
+
+    const Position& pos;
+    Bitboard        occupied;
+
+    // attackedBy[color][piece type] is a bitboard representing all squares
+    // attacked by a given color and piece type. Special "piece types" which
+    // is also calculated is ALL_PIECES.
+    Bitboard attackedBy[COLOR_NB][PIECE_TYPE_NB];
+
+    // attackedBy2[color] are the squares attacked by at least 2 units of a given
+    // color, including x-rays. But diagonal x-rays through pawns are not computed.
+    Bitboard attackedBy2[COLOR_NB];
+};
+
+Evaluation::Evaluation(const Position& p) :
+    pos(p),
+    occupied(p.duck_square() != SQ_NONE ? p.pieces() ^ p.duck_square() : p.pieces()) {
+
+    initialize<WHITE>();
+    initialize<BLACK>();
+
+    // Add the attacks of the other pieces
+    pieces<WHITE, KNIGHT>();
+    pieces<BLACK, KNIGHT>();
+    pieces<WHITE, BISHOP>();
+    pieces<BLACK, BISHOP>();
+    pieces<WHITE, ROOK>();
+    pieces<BLACK, ROOK>();
+    pieces<WHITE, QUEEN>();
+    pieces<BLACK, QUEEN>();
+}
+
+// Computes the king and pawn attacks of the given color
+template<Color Us>
+void Evaluation::initialize() {
+
+    Bitboard dblAttackByPawn = pawn_double_attacks_bb<Us>(pos.pieces(Us, PAWN));
+
+    // Initialize attackedBy[] for king and pawns
+    attackedBy[Us][KING] =
+      pos.pieces(Us, KING) ? Attacks::attacks_bb(KING, pos.square<KING>(Us)) : Bitboard(0);
+    attackedBy[Us][PAWN]       = pawn_attacks_bb<Us>(pos.pieces(Us, PAWN));
+    attackedBy[Us][ALL_PIECES] = attackedBy[Us][KING] | attackedBy[Us][PAWN];
+    attackedBy2[Us]            = dblAttackByPawn | (attackedBy[Us][KING] & attackedBy[Us][PAWN]);
+}
+
+// Adds the attacks of the pieces of the given color and type. Bishops see
+// through queens, and rooks through queens and our rooks.
+template<Color Us, PieceType Pt>
+void Evaluation::pieces() {
+
+    attackedBy[Us][Pt] = 0;
+
+    for (Bitboard bb = pos.pieces(Us, Pt); bb;)
+    {
+        Square s = pop_lsb(bb);
+
+        // Find attacked squares, including x-ray attacks for bishops and rooks
+        Bitboard b =
+          Pt == BISHOP ? Attacks::attacks_bb(BISHOP, s, occupied ^ pos.pieces(QUEEN))
+          : Pt == ROOK
+            ? Attacks::attacks_bb(ROOK, s, occupied ^ pos.pieces(QUEEN) ^ pos.pieces(Us, ROOK))
+            : Attacks::attacks_bb(Pt, s, occupied);
+
+        attackedBy2[Us] |= attackedBy[Us][ALL_PIECES] & b;
+        attackedBy[Us][Pt] |= b;
+        attackedBy[Us][ALL_PIECES] |= b;
+    }
+}
+
+// Threats, as in Stockfish 11: returns the bonus for the enemy pieces that the
+// given color attacks. A piece attacked by our knight or bishop gets
+// ThreatByMinor by its type, unless it is a pawn defended by a pawn. A weak
+// piece, one the enemy doesn't strongly protect (with a pawn, or twice when we
+// attack it only once), gets ThreatByRook by its type when our rook attacks it,
+// ThreatByKing when our king does, and Hanging when the enemy doesn't defend
+// it at all or it is not a pawn and we attack it twice. The enemy king is left
+// out: an attack on it is the duck shield's business.
+template<Color Us>
+TaperedScore Evaluation::threats() const {
+
+    constexpr Color Them = ~Us;
+
+    Bitboard enemies = pos.pieces(Them) & ~pos.pieces(KING);
+
+    // Non-pawn enemies
+    Bitboard nonPawnEnemies = enemies & ~pos.pieces(PAWN);
+
+    // Squares strongly protected by the enemy, either because they defend the
+    // square with a pawn, or because they defend the square twice and we don't.
+    Bitboard stronglyProtected = attackedBy[Them][PAWN] | (attackedBy2[Them] & ~attackedBy2[Us]);
+
+    // Non-pawn enemies, strongly protected
+    Bitboard defended = nonPawnEnemies & stronglyProtected;
+
+    // Enemies not strongly protected and under our attack
+    Bitboard weak = enemies & ~stronglyProtected & attackedBy[Us][ALL_PIECES];
+
+    TaperedScore score = SCORE_ZERO;
+
+    // Bonus according to the kind of attacking pieces
+    if (defended | weak)
+    {
+        Bitboard b = (defended | weak) & (attackedBy[Us][KNIGHT] | attackedBy[Us][BISHOP]);
+        while (b)
+            score += ThreatByMinor[type_of(pos.piece_on(pop_lsb(b)))];
+
+        b = weak & attackedBy[Us][ROOK];
+        while (b)
+            score += ThreatByRook[type_of(pos.piece_on(pop_lsb(b)))];
+
+        if (weak & attackedBy[Us][KING])
+            score += ThreatByKing;
+
+        b = ~attackedBy[Them][ALL_PIECES] | (nonPawnEnemies & attackedBy2[Us]);
+        score += Hanging * popcount(weak & b);
+    }
+
+    return score;
+}
+
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
 // it counts as lifted. An attack by a knight, pawn or king, or by a slider
@@ -269,16 +428,16 @@ int king_danger(const Position& pos) {
 
 // Evaluates the position from the point of view of the side to move: material
 // and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, and the danger to the king of the side to move,
-// tapered by the game phase.
+// shelter of the kings, threats on enemy pieces, and the danger to the king of
+// the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score  = pos.psq_score()
-                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
-                       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)
-                       + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos);
+    TaperedScore score =
+      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+      + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos) + king_shelter<WHITE>(pos)
+      - king_shelter<BLACK>(pos) + Evaluation(pos).value();
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -318,6 +477,8 @@ std::string Eval::trace(Position& pos) {
        << mg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)) << ", eg "
        << eg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos))
        << " (white side, internal units)\n";
+    ss << "Threats                  mg " << mg_value(Evaluation(pos).value()) << ", eg "
+       << eg_value(Evaluation(pos).value()) << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
