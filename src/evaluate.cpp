@@ -116,6 +116,76 @@ constexpr TaperedScore Hanging      = make_score(69, 36);
 constexpr TaperedScore ThreatBySafePawn = make_score(173, 94);
 constexpr TaperedScore ThreatByPawnPush = make_score(48, 39);
 
+// clang-format off
+
+// Polynomial material imbalance parameters, Stockfish 11's values
+constexpr int QuadraticOurs[][PIECE_TYPE_NB] = {
+  //            OUR PIECES
+  // pair pawn knight bishop rook queen
+  {1438                               }, // Bishop pair
+  {  40,   38                         }, // Pawn
+  {  32,  255, -62                    }, // Knight      OUR PIECES
+  {   0,  104,   4,    0              }, // Bishop
+  { -26,   -2,  47,   105,  -208      }, // Rook
+  {-189,   24, 117,   133,  -134, -6  }  // Queen
+};
+
+constexpr int QuadraticTheirs[][PIECE_TYPE_NB] = {
+  //           THEIR PIECES
+  // pair pawn knight bishop rook queen
+  {   0                               }, // Bishop pair
+  {  36,    0                         }, // Pawn
+  {   9,   63,   0                    }, // Knight      OUR PIECES
+  {  59,   65,  42,     0             }, // Bishop
+  {  46,   39,  24,   -24,    0       }, // Rook
+  {  97,  100, -42,   137,  268,    0 }  // Queen
+};
+
+// clang-format on
+
+// Material imbalance, as in Stockfish 11 (Tord Romstad's second-degree
+// polynomial): returns the bonus of the given color for its pieces of each
+// type, by the counts of our and the enemy's pieces of the same or lower types.
+// The first "type" is the bishop pair.
+template<Color Us>
+int imbalance(const int pieceCount[][PIECE_TYPE_NB]) {
+
+    constexpr Color Them = ~Us;
+
+    int bonus = 0;
+
+    // Second-degree polynomial material imbalance, by Tord Romstad
+    for (int pt1 = NO_PIECE_TYPE; pt1 <= QUEEN; ++pt1)
+    {
+        if (!pieceCount[Us][pt1])
+            continue;
+
+        int v = 0;
+
+        for (int pt2 = NO_PIECE_TYPE; pt2 <= pt1; ++pt2)
+            v += QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2]
+               + QuadraticTheirs[pt1][pt2] * pieceCount[Them][pt2];
+
+        bonus += pieceCount[Us][pt1] * v;
+    }
+
+    return bonus;
+}
+
+// Returns the material imbalance for White, a sixteenth of the difference of
+// the two sides' imbalance(), the same in the middlegame and the endgame
+TaperedScore material_imbalance(const Position& pos) {
+
+    const int pieceCount[COLOR_NB][PIECE_TYPE_NB] = {
+      {pos.count<BISHOP>(WHITE) > 1, pos.count<PAWN>(WHITE), pos.count<KNIGHT>(WHITE),
+       pos.count<BISHOP>(WHITE), pos.count<ROOK>(WHITE), pos.count<QUEEN>(WHITE)},
+      {pos.count<BISHOP>(BLACK) > 1, pos.count<PAWN>(BLACK), pos.count<KNIGHT>(BLACK),
+       pos.count<BISHOP>(BLACK), pos.count<ROOK>(BLACK), pos.count<QUEEN>(BLACK)}};
+
+    int v = (imbalance<WHITE>(pieceCount) - imbalance<BLACK>(pieceCount)) / 16;
+    return make_score(v, v);
+}
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -457,8 +527,8 @@ int king_danger(const Position& pos) {
 
 // Evaluates the position from the point of view of the side to move: material
 // and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, threats on enemy pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// shelter of the kings, threats on enemy pieces, the material imbalance, and
+// the danger to the king of the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
@@ -466,7 +536,7 @@ Value Eval::evaluate(const Position& pos) {
     TaperedScore score =
       pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos) + king_shelter<WHITE>(pos)
-      - king_shelter<BLACK>(pos) + Evaluation(pos).value();
+      - king_shelter<BLACK>(pos) + Evaluation(pos).value() + material_imbalance(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -498,6 +568,8 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
+    ss << "Material imbalance       " << mg_value(material_imbalance(pos))
+       << " (white side, internal units)\n";
     ss << "Passed pawns             mg "
        << mg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)) << ", eg "
        << eg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos))
