@@ -94,6 +94,10 @@ constexpr Value UnblockedStorm[int(FILE_NB) / 2][RANK_NB] = {
 // Penalty for an enemy pawn on our third rank, blocked by our pawn
 constexpr TaperedScore BlockedStorm = make_score(82, 82);
 
+// KingAttackWeights[PieceType] contains the king attack weights by piece type.
+// These are Stockfish 11's values.
+constexpr int KingAttackWeights[PIECE_TYPE_NB] = {0, 0, 81, 52, 44, 10};
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -202,6 +206,186 @@ TaperedScore king_shelter(const Position& pos) {
     return shelter - make_score(0, 16 * minPawnDist);
 }
 
+// Evaluation, as in Stockfish 11, computes the squares that each side attacks
+// and scores the kings with them: the pawn shelter, and a penalty for the
+// enemy pieces aiming at the squares around the king. The duck is lifted, as it
+// moves every turn and either side may place it next. Nothing is pinned in duck
+// chess, where a king may be left attacked, so every piece attacks all its
+// squares.
+class Evaluation {
+   public:
+    Evaluation()                             = delete;
+    Evaluation(const Evaluation&)            = delete;
+    Evaluation& operator=(const Evaluation&) = delete;
+
+    explicit Evaluation(const Position& p);
+    TaperedScore value() const { return king<WHITE>() - king<BLACK>(); }
+
+   private:
+    template<Color Us>
+    void initialize();
+    template<Color Us, PieceType Pt>
+    void pieces();
+    template<Color Us>
+    TaperedScore king() const;
+
+    const Position& pos;
+    Bitboard        occupied;
+
+    // attackedBy[color][piece type] is a bitboard representing all squares
+    // attacked by a given color and piece type. Special "piece types" which
+    // is also calculated is ALL_PIECES.
+    Bitboard attackedBy[COLOR_NB][PIECE_TYPE_NB];
+
+    // attackedBy2[color] are the squares attacked by at least 2 units of a given
+    // color, including x-rays. But diagonal x-rays through pawns are not computed.
+    Bitboard attackedBy2[COLOR_NB];
+
+    // kingRing[color] are the squares adjacent to the king plus some other
+    // very near squares, depending on king position.
+    Bitboard kingRing[COLOR_NB];
+
+    // kingAttackersCount[color] is the number of pieces of the given color
+    // which attack a square in the kingRing of the enemy king.
+    int kingAttackersCount[COLOR_NB];
+
+    // kingAttackersWeight[color] is the sum of the "weights" of the pieces of
+    // the given color which attack a square in the kingRing of the enemy king.
+    // The weights of the individual piece types are given by the elements in
+    // the KingAttackWeights array.
+    int kingAttackersWeight[COLOR_NB];
+
+    // kingAttacksCount[color] is the number of attacks by the given color to
+    // squares directly adjacent to the enemy king. Pieces which attack more
+    // than one square are counted multiple times. For instance, if there is
+    // a white knight on g5 and black's king is on g8, this white knight adds 2
+    // to kingAttacksCount[WHITE].
+    int kingAttacksCount[COLOR_NB];
+};
+
+Evaluation::Evaluation(const Position& p) :
+    pos(p),
+    occupied(p.duck_square() != SQ_NONE ? p.pieces() ^ p.duck_square() : p.pieces()) {
+
+    initialize<WHITE>();
+    initialize<BLACK>();
+
+    // Add the attacks of the other pieces, counting the king attackers
+    pieces<WHITE, KNIGHT>();
+    pieces<BLACK, KNIGHT>();
+    pieces<WHITE, BISHOP>();
+    pieces<BLACK, BISHOP>();
+    pieces<WHITE, ROOK>();
+    pieces<BLACK, ROOK>();
+    pieces<WHITE, QUEEN>();
+    pieces<BLACK, QUEEN>();
+}
+
+// Computes the king and pawn attacks and the king ring of the given color
+template<Color Us>
+void Evaluation::initialize() {
+
+    constexpr Color Them = ~Us;
+
+    Bitboard dblAttackByPawn = pawn_double_attacks_bb<Us>(pos.pieces(Us, PAWN));
+
+    // Initialize attackedBy[] for king and pawns
+    attackedBy[Us][KING] =
+      pos.pieces(Us, KING) ? Attacks::attacks_bb(KING, pos.square<KING>(Us)) : Bitboard(0);
+    attackedBy[Us][PAWN]       = pawn_attacks_bb<Us>(pos.pieces(Us, PAWN));
+    attackedBy[Us][ALL_PIECES] = attackedBy[Us][KING] | attackedBy[Us][PAWN];
+    attackedBy2[Us]            = dblAttackByPawn | (attackedBy[Us][KING] & attackedBy[Us][PAWN]);
+
+    kingAttacksCount[Them] = kingAttackersWeight[Them] = 0;
+
+    // A side may have lost its king, and the game ends then
+    if (!pos.pieces(Us, KING))
+    {
+        kingRing[Us]             = 0;
+        kingAttackersCount[Them] = 0;
+        return;
+    }
+
+    // Init our king safety tables
+    Square ksq   = pos.square<KING>(Us);
+    Square s     = make_square(std::clamp(file_of(ksq), FILE_B, FILE_G),
+                               std::clamp(rank_of(ksq), RANK_2, RANK_7));
+    kingRing[Us] = Attacks::attacks_bb(KING, s) | s;
+
+    kingAttackersCount[Them] =
+      popcount(kingRing[Us] & pawn_attacks_bb<Them>(pos.pieces(Them, PAWN)));
+
+    // Remove from kingRing[] the squares defended by two pawns
+    kingRing[Us] &= ~dblAttackByPawn;
+}
+
+// Adds the attacks of the pieces of the given color and type, and counts those
+// that attack the enemy king ring. Bishops see through queens, and rooks
+// through queens and our rooks.
+template<Color Us, PieceType Pt>
+void Evaluation::pieces() {
+
+    constexpr Color Them = ~Us;
+
+    attackedBy[Us][Pt] = 0;
+
+    for (Bitboard bb = pos.pieces(Us, Pt); bb;)
+    {
+        Square s = pop_lsb(bb);
+
+        // Find attacked squares, including x-ray attacks for bishops and rooks
+        Bitboard b =
+          Pt == BISHOP ? Attacks::attacks_bb(BISHOP, s, occupied ^ pos.pieces(QUEEN))
+          : Pt == ROOK
+            ? Attacks::attacks_bb(ROOK, s, occupied ^ pos.pieces(QUEEN) ^ pos.pieces(Us, ROOK))
+            : Attacks::attacks_bb(Pt, s, occupied);
+
+        attackedBy2[Us] |= attackedBy[Us][ALL_PIECES] & b;
+        attackedBy[Us][Pt] |= b;
+        attackedBy[Us][ALL_PIECES] |= b;
+
+        if (b & kingRing[Them])
+        {
+            kingAttackersCount[Us]++;
+            kingAttackersWeight[Us] += KingAttackWeights[Pt];
+            kingAttacksCount[Us] += popcount(b & attackedBy[Them][KING]);
+        }
+    }
+}
+
+// Scores the king of the given color: the pawn shelter (king_shelter()), less a
+// penalty for the king danger, as in Stockfish 11. The danger counts the enemy
+// pieces attacking the king ring, by number and weight, the weak squares in the
+// ring (attacked by the enemy and defended at most once, by our king or queen
+// alone), and the attacks on the squares next to the king. It is lower when the
+// enemy has no queen or our shelter is good. Over 100 it becomes a penalty that
+// grows with its square in the middlegame.
+template<Color Us>
+TaperedScore Evaluation::king() const {
+
+    constexpr Color Them = ~Us;
+
+    // Init the score with king shelter and enemy pawns storm
+    TaperedScore score = king_shelter<Us>(pos);
+
+    if (!pos.pieces(Us, KING))
+        return score;
+
+    // Attacked squares defended at most once by our queen or king
+    Bitboard weak = attackedBy[Them][ALL_PIECES] & ~attackedBy2[Us]
+                  & (~attackedBy[Us][ALL_PIECES] | attackedBy[Us][KING] | attackedBy[Us][QUEEN]);
+
+    int kingDanger = kingAttackersCount[Them] * kingAttackersWeight[Them]
+                   + 185 * popcount(kingRing[Us] & weak) + 69 * kingAttacksCount[Them]
+                   - 873 * !pos.count<QUEEN>(Them) - 6 * mg_value(score) / 8 + 37;
+
+    // Transform the kingDanger units into a TaperedScore, and subtract it from the evaluation
+    if (kingDanger > 100)
+        score -= make_score(kingDanger * kingDanger / 4096, kingDanger / 16);
+
+    return score;
+}
+
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
 // it counts as lifted. An attack by a knight, pawn or king, or by a slider
@@ -241,16 +425,15 @@ int king_danger(const Position& pos) {
 
 // Evaluates the position from the point of view of the side to move: material
 // and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, and the danger to the king of the side to move,
-// tapered by the game phase.
+// shelter of the kings and the attacks on them, and the danger to the king of
+// the side to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score  = pos.psq_score()
-                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
-                       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)
-                       + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos);
+    TaperedScore score =
+      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+      + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos) + Evaluation(pos).value();
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -290,6 +473,10 @@ std::string Eval::trace(Position& pos) {
        << mg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)) << ", eg "
        << eg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos))
        << " (white side, internal units)\n";
+    TaperedScore kingAttacks =
+      Evaluation(pos).value() - (king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos));
+    ss << "King attacks             mg " << mg_value(kingAttacks) << ", eg "
+       << eg_value(kingAttacks) << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
