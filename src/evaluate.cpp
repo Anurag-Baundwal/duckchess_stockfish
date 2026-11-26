@@ -123,63 +123,6 @@ int pawn_defended(const Position& pos) {
     return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
 }
 
-// Passed pawns, as in Stockfish 11: returns the bonus for the pawns of the
-// given color that no enemy pawn stands in front of or next to on their way to
-// promotion, by their rank, less a little for each file away from the edge. From
-// the fourth rank on, the bonus grows in the endgame the further the enemy king
-// is from the square in front of the pawn, and the closer our king is. A passed
-// pawn with another pawn in front of it gets half. The duck doesn't count, as it
-// moves every turn.
-template<Color Us>
-TaperedScore passed_pawns(const Position& pos) {
-
-    constexpr Color     Them = ~Us;
-    constexpr Direction Up   = pawn_push(Us);
-
-    // The distance of a king to a square, at most 5
-    auto king_proximity = [&](Color c, Square s) {
-        return std::min(distance(pos.square<KING>(c), s), 5);
-    };
-
-    // A side may have lost its king, and the game ends then
-    bool bothKings = pos.pieces(WHITE, KING) && pos.pieces(BLACK, KING);
-
-    TaperedScore score = SCORE_ZERO;
-
-    for (Bitboard b = pos.pieces(Us, PAWN); b;)
-    {
-        Square s = pop_lsb(b);
-
-        if (!pos.pawn_passed(Us, s))
-            continue;
-
-        int          r     = relative_rank(Us, s);
-        TaperedScore bonus = PassedRank[r];
-
-        if (r > RANK_3 && bothKings)
-        {
-            int    w       = 5 * r - 13;
-            Square blockSq = s + Up;
-
-            // Adjust bonus based on the king's proximity
-            bonus += make_score(
-              0, ((king_proximity(Them, blockSq) * 19) / 4 - king_proximity(Us, blockSq) * 2) * w);
-
-            // If blockSq is not the queening square then consider also a second push
-            if (r != RANK_7)
-                bonus -= make_score(0, king_proximity(Us, blockSq + Up) * w);
-        }
-
-        // Scale down the bonus when a pawn stands in front of it
-        if (pos.pieces(PAWN) & forward_file_bb(Us, s))
-            bonus = make_score(mg_value(bonus) / 2, eg_value(bonus) / 2);
-
-        score += bonus - PassedFile * edge_distance(file_of(s));
-    }
-
-    return score;
-}
-
 // Returns the pawn shelter bonus and the pawn storm penalty for a king of the
 // given color on the given square, as in Stockfish 11. It looks at the king's
 // file and the two closest files, at our pawns and the enemy pawns that are not
@@ -264,7 +207,9 @@ class Evaluation {
     Evaluation& operator=(const Evaluation&) = delete;
 
     explicit Evaluation(const Position& p);
-    TaperedScore value() const { return threats<WHITE>() - threats<BLACK>(); }
+    TaperedScore value() const { return threats_value() + passed_value(); }
+    TaperedScore threats_value() const { return threats<WHITE>() - threats<BLACK>(); }
+    TaperedScore passed_value() const { return passed<WHITE>() - passed<BLACK>(); }
 
    private:
     template<Color Us>
@@ -273,6 +218,8 @@ class Evaluation {
     void pieces();
     template<Color Us>
     TaperedScore threats() const;
+    template<Color Us>
+    TaperedScore passed() const;
 
     const Position& pos;
     Bitboard        occupied;
@@ -418,6 +365,94 @@ TaperedScore Evaluation::threats() const {
     return score;
 }
 
+// Passed pawns, as in Stockfish 11: returns the bonus for the pawns of the
+// given color that no enemy pawn stands in front of or next to on their way to
+// promotion, by their rank, less a little for each file away from the edge. From
+// the fourth rank on, the bonus grows in the endgame the further the enemy king
+// is from the square in front of the pawn, and the closer our king is. A passed
+// pawn that is free to advance gets more, the more so when the enemy attacks
+// none of the squares on its way. A passed pawn with another pawn in front of
+// it gets half. The duck doesn't count, as it moves every turn.
+template<Color Us>
+TaperedScore Evaluation::passed() const {
+
+    constexpr Color     Them = ~Us;
+    constexpr Direction Up   = pawn_push(Us);
+
+    // The distance of a king to a square, at most 5
+    auto king_proximity = [&](Color c, Square s) {
+        return std::min(distance(pos.square<KING>(c), s), 5);
+    };
+
+    // A side may have lost its king, and the game ends then
+    bool bothKings = pos.pieces(WHITE, KING) && pos.pieces(BLACK, KING);
+
+    TaperedScore score = SCORE_ZERO;
+
+    for (Bitboard b = pos.pieces(Us, PAWN); b;)
+    {
+        Square s = pop_lsb(b);
+
+        if (!pos.pawn_passed(Us, s))
+            continue;
+
+        int          r     = relative_rank(Us, s);
+        TaperedScore bonus = PassedRank[r];
+
+        if (r > RANK_3)
+        {
+            int    w       = 5 * r - 13;
+            Square blockSq = s + Up;
+
+            if (bothKings)
+            {
+                // Adjust bonus based on the king's proximity
+                bonus += make_score(
+                  0,
+                  ((king_proximity(Them, blockSq) * 19) / 4 - king_proximity(Us, blockSq) * 2) * w);
+
+                // If blockSq is not the queening square then consider also a second push
+                if (r != RANK_7)
+                    bonus -= make_score(0, king_proximity(Us, blockSq + Up) * w);
+            }
+
+            // If the pawn is free to advance, then increase the bonus
+            if (!(occupied & blockSq))
+            {
+                Bitboard squaresToQueen = forward_file_bb(Us, s);
+                Bitboard unsafeSquares  = passed_pawn_span(Us, s);
+
+                Bitboard bb = forward_file_bb(Them, s) & pos.pieces(ROOK, QUEEN);
+
+                if (!(pos.pieces(Them) & bb))
+                    unsafeSquares &= attackedBy[Them][ALL_PIECES];
+
+                // If there are no enemy attacks on passed pawn span, assign a big bonus.
+                // Otherwise assign a smaller bonus if the path to queen is not attacked
+                // and even smaller bonus if it is attacked but block square is not.
+                int k = !unsafeSquares                    ? 35
+                      : !(unsafeSquares & squaresToQueen) ? 20
+                      : !(unsafeSquares & blockSq)        ? 9
+                                                          : 0;
+
+                // Assign a larger bonus if the block square is defended
+                if ((pos.pieces(Us) & bb) || (attackedBy[Us][ALL_PIECES] & blockSq))
+                    k += 5;
+
+                bonus += make_score(k * w, k * w);
+            }
+        }
+
+        // Scale down the bonus when a pawn stands in front of it
+        if (pos.pieces(PAWN) & forward_file_bb(Us, s))
+            bonus = make_score(mg_value(bonus) / 2, eg_value(bonus) / 2);
+
+        score += bonus - PassedFile * edge_distance(file_of(s));
+    }
+
+    return score;
+}
+
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
 // it counts as lifted. An attack by a knight, pawn or king, or by a slider
@@ -465,8 +500,7 @@ Value Eval::evaluate(const Position& pos) {
     int          danger = king_danger(pos);
     TaperedScore score =
       pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
-      + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos) + king_shelter<WHITE>(pos)
-      - king_shelter<BLACK>(pos) + Evaluation(pos).value();
+      + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos) + Evaluation(pos).value();
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -498,16 +532,14 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
-    ss << "Passed pawns             mg "
-       << mg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)) << ", eg "
-       << eg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos))
-       << " (white side, internal units)\n";
+    ss << "Passed pawns             mg " << mg_value(Evaluation(pos).passed_value()) << ", eg "
+       << eg_value(Evaluation(pos).passed_value()) << " (white side, internal units)\n";
     ss << "King shelter             mg "
        << mg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)) << ", eg "
        << eg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos))
        << " (white side, internal units)\n";
-    ss << "Threats                  mg " << mg_value(Evaluation(pos).value()) << ", eg "
-       << eg_value(Evaluation(pos).value()) << " (white side, internal units)\n";
+    ss << "Threats                  mg " << mg_value(Evaluation(pos).threats_value()) << ", eg "
+       << eg_value(Evaluation(pos).threats_value()) << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
