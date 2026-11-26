@@ -116,6 +116,53 @@ constexpr TaperedScore Hanging      = make_score(69, 36);
 constexpr TaperedScore ThreatBySafePawn = make_score(173, 94);
 constexpr TaperedScore ThreatByPawnPush = make_score(48, 39);
 
+// Bonus for a bishop on a long diagonal, and penalty for a cornered bishop.
+// Stockfish 11's values.
+constexpr TaperedScore LongDiagonalBishop = make_score(45, 0);
+constexpr TaperedScore CorneredBishop     = make_score(50, 50);
+
+constexpr Bitboard Center = (FileDBB | FileEBB) & (Rank4BB | Rank5BB);
+
+// Bishops, as in Stockfish 11: returns the bonus for the bishops of the given
+// color that see two of the four central squares, looking through everything
+// but pawns, and the penalty for a bishop in a corner of our first rank with
+// our own pawn diagonally in front of it, a Chess960 pattern (all our games
+// start as one). The penalty is four times as large when something blocks
+// that pawn, and twice as large when another pawn of ours stands next on the
+// diagonal. The duck doesn't block, as it moves every turn.
+template<Color Us>
+TaperedScore bishops(const Position& pos) {
+
+    constexpr Direction Up = pawn_push(Us);
+
+    Bitboard     occupied = pos.pieces(WHITE) | pos.pieces(BLACK);
+    TaperedScore score    = SCORE_ZERO;
+
+    for (Bitboard b = pos.pieces(Us, BISHOP); b;)
+    {
+        Square s = pop_lsb(b);
+
+        // Bonus for bishop on a long diagonal which can "see" both center squares
+        if (more_than_one(Attacks::attacks_bb(BISHOP, s, pos.pieces(PAWN)) & Center))
+            score += LongDiagonalBishop;
+
+        // An important Chess960 pattern: a cornered bishop blocked by a friendly
+        // pawn diagonally in front of it is a very serious problem, especially
+        // when that pawn is also blocked.
+        if (pos.is_chess960()
+            && (s == relative_square(Us, SQ_A1) || s == relative_square(Us, SQ_H1)))
+        {
+            Direction d = Up + (file_of(s) == FILE_A ? EAST : WEST);
+            if (pos.piece_on(s + d) == make_piece(Us, PAWN))
+                score -= (occupied & (s + d + Up))                       ? CorneredBishop * 4
+                       : pos.piece_on(s + d + d) == make_piece(Us, PAWN) ? CorneredBishop * 2
+                                                                         : CorneredBishop;
+        }
+    }
+
+    return score;
+}
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -457,16 +504,18 @@ int king_danger(const Position& pos) {
 
 // Evaluates the position from the point of view of the side to move: material
 // and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, threats on enemy pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// shelter of the kings, threats on enemy pieces, long-diagonal and cornered
+// bishops, and the danger to the king of the side to move, tapered by the game
+// phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score =
-      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
-      + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos) + king_shelter<WHITE>(pos)
-      - king_shelter<BLACK>(pos) + Evaluation(pos).value();
+    TaperedScore score  = pos.psq_score()
+                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+                       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)
+                       + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)
+                       + Evaluation(pos).value() + bishops<WHITE>(pos) - bishops<BLACK>(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -508,6 +557,9 @@ std::string Eval::trace(Position& pos) {
        << " (white side, internal units)\n";
     ss << "Threats                  mg " << mg_value(Evaluation(pos).value()) << ", eg "
        << eg_value(Evaluation(pos).value()) << " (white side, internal units)\n";
+    ss << "Bishops                  mg " << mg_value(bishops<WHITE>(pos) - bishops<BLACK>(pos))
+       << ", eg " << eg_value(bishops<WHITE>(pos) - bishops<BLACK>(pos))
+       << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
