@@ -116,6 +116,13 @@ constexpr TaperedScore Hanging      = make_score(69, 36);
 constexpr TaperedScore ThreatBySafePawn = make_score(173, 94);
 constexpr TaperedScore ThreatByPawnPush = make_score(48, 39);
 
+// Bonus for each square the enemy attacks that we attack too and they don't
+// strongly protect, and for our pieces that could attack the enemy queen from a
+// safe square next move. Stockfish 11's values.
+constexpr TaperedScore RestrictedPiece = make_score(7, 7);
+constexpr TaperedScore KnightOnQueen   = make_score(16, 12);
+constexpr TaperedScore SliderOnQueen   = make_score(59, 18);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -285,6 +292,11 @@ class Evaluation {
     // attackedBy2[color] are the squares attacked by at least 2 units of a given
     // color, including x-rays. But diagonal x-rays through pawns are not computed.
     Bitboard attackedBy2[COLOR_NB];
+
+    // mobilityArea[color] are the squares where the pieces of the given color
+    // may usefully go: not those of our blocked pawns, our pawns on the second
+    // and third ranks, our king and queen, nor those the enemy pawns attack.
+    Bitboard mobilityArea[COLOR_NB];
 };
 
 Evaluation::Evaluation(const Position& p) :
@@ -309,7 +321,19 @@ Evaluation::Evaluation(const Position& p) :
 template<Color Us>
 void Evaluation::initialize() {
 
+    constexpr Color     Them     = ~Us;
+    constexpr Direction Down     = -pawn_push(Us);
+    constexpr Bitboard  LowRanks = (Us == WHITE ? Rank2BB | Rank3BB : Rank7BB | Rank6BB);
+
     Bitboard dblAttackByPawn = pawn_double_attacks_bb<Us>(pos.pieces(Us, PAWN));
+
+    // Find our pawns that are blocked or on the first two ranks
+    Bitboard b = pos.pieces(Us, PAWN) & (shift(occupied, Down) | LowRanks);
+
+    // Squares occupied by those pawns, by our king or queen or controlled by
+    // enemy pawns are excluded from the mobility area. Nothing is pinned.
+    mobilityArea[Us] =
+      ~(b | pos.pieces(Us, KING, QUEEN) | pawn_attacks_bb<Them>(pos.pieces(Them, PAWN)));
 
     // Initialize attackedBy[] for king and pawns
     attackedBy[Us][KING] =
@@ -352,8 +376,12 @@ void Evaluation::pieces() {
 // it at all or it is not a pawn and we attack it twice. A piece that our pawn
 // attacks from a square the enemy doesn't attack, or that we defend, gets
 // ThreatBySafePawn, and one that such a pawn would attack after a safe push
-// ThreatByPawnPush. The enemy king is left out: an attack on it is the duck
-// shield's business.
+// ThreatByPawnPush. Each square the enemy attacks that we attack too, and that
+// they don't strongly protect, gets RestrictedPiece. Against a lone enemy
+// queen, each square of our mobility area the enemy doesn't strongly protect
+// gets KnightOnQueen if our knight can go there and attack the queen next, and
+// SliderOnQueen if our bishop or rook can and we attack it twice. The enemy
+// king is left out: an attack on it is the duck shield's business.
 template<Color Us>
 TaperedScore Evaluation::threats() const {
 
@@ -414,6 +442,24 @@ TaperedScore Evaluation::threats() const {
     // Bonus for safe pawn threats on the next move
     b = pawn_attacks_bb<Us>(b) & nonPawnEnemies;
     score += ThreatByPawnPush * popcount(b);
+
+    // Bonus for restricting their piece moves
+    b = attackedBy[Them][ALL_PIECES] & ~stronglyProtected & attackedBy[Us][ALL_PIECES];
+    score += RestrictedPiece * popcount(b);
+
+    // Bonus for threats on the next moves against enemy queen
+    if (pos.count<QUEEN>(Them) == 1)
+    {
+        Square s = pos.square<QUEEN>(Them);
+        safe     = mobilityArea[Us] & ~stronglyProtected;
+
+        b = attackedBy[Us][KNIGHT] & Attacks::attacks_bb(KNIGHT, s, occupied);
+        score += KnightOnQueen * popcount(b & safe);
+
+        b = (attackedBy[Us][BISHOP] & Attacks::attacks_bb(BISHOP, s, occupied))
+          | (attackedBy[Us][ROOK] & Attacks::attacks_bb(ROOK, s, occupied));
+        score += SliderOnQueen * popcount(b & safe & attackedBy2[Us]);
+    }
 
     return score;
 }
