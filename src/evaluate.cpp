@@ -111,6 +111,11 @@ constexpr TaperedScore ThreatByRook[PIECE_TYPE_NB] = {make_score(0, 0),   make_s
 constexpr TaperedScore ThreatByKing = make_score(24, 89);
 constexpr TaperedScore Hanging      = make_score(69, 36);
 
+// Bonus for our relatively safe pawns attacking an enemy piece, now or after
+// a safe push. Stockfish 11's values.
+constexpr TaperedScore ThreatBySafePawn = make_score(173, 94);
+constexpr TaperedScore ThreatByPawnPush = make_score(48, 39);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -344,12 +349,17 @@ void Evaluation::pieces() {
 // piece, one the enemy doesn't strongly protect (with a pawn, or twice when we
 // attack it only once), gets ThreatByRook by its type when our rook attacks it,
 // ThreatByKing when our king does, and Hanging when the enemy doesn't defend
-// it at all or it is not a pawn and we attack it twice. The enemy king is left
-// out: an attack on it is the duck shield's business.
+// it at all or it is not a pawn and we attack it twice. A piece that our pawn
+// attacks from a square the enemy doesn't attack, or that we defend, gets
+// ThreatBySafePawn, and one that such a pawn would attack after a safe push
+// ThreatByPawnPush. The enemy king is left out: an attack on it is the duck
+// shield's business.
 template<Color Us>
 TaperedScore Evaluation::threats() const {
 
-    constexpr Color Them = ~Us;
+    constexpr Color     Them     = ~Us;
+    constexpr Direction Up       = pawn_push(Us);
+    constexpr Bitboard  TRank3BB = (Us == WHITE ? Rank3BB : Rank6BB);
 
     Bitboard enemies = pos.pieces(Them) & ~pos.pieces(KING);
 
@@ -385,6 +395,25 @@ TaperedScore Evaluation::threats() const {
         b = ~attackedBy[Them][ALL_PIECES] | (nonPawnEnemies & attackedBy2[Us]);
         score += Hanging * popcount(weak & b);
     }
+
+    // Protected or unattacked squares
+    Bitboard safe = ~attackedBy[Them][ALL_PIECES] | attackedBy[Us][ALL_PIECES];
+
+    // Bonus for attacking enemy pieces with our relatively safe pawns
+    Bitboard b = pos.pieces(Us, PAWN) & safe;
+    b          = pawn_attacks_bb<Us>(b) & nonPawnEnemies;
+    score += ThreatBySafePawn * popcount(b);
+
+    // Find squares where our pawns can push on the next move
+    b = shift(pos.pieces(Us, PAWN), Up) & ~occupied;
+    b |= shift(b & TRank3BB, Up) & ~occupied;
+
+    // Keep only the squares which are relatively safe
+    b &= ~attackedBy[Them][PAWN] & safe;
+
+    // Bonus for safe pawn threats on the next move
+    b = pawn_attacks_bb<Us>(b) & nonPawnEnemies;
+    score += ThreatByPawnPush * popcount(b);
 
     return score;
 }
