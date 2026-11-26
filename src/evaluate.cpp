@@ -116,6 +116,10 @@ constexpr TaperedScore Hanging      = make_score(69, 36);
 constexpr TaperedScore ThreatBySafePawn = make_score(173, 94);
 constexpr TaperedScore ThreatByPawnPush = make_score(48, 39);
 
+// Penalty for each kind of enemy piece that can attack our king next move, from
+// a safe square, in a way the duck can't block
+constexpr TaperedScore UnblockableCheck = make_score(70, 50);
+
 // Pawn-defended pieces, as in wakwak: returns how many pieces of the given
 // color, pawns and king included, stand on squares that its own pawns attack.
 template<Color Us>
@@ -264,7 +268,9 @@ class Evaluation {
     Evaluation& operator=(const Evaluation&) = delete;
 
     explicit Evaluation(const Position& p);
-    TaperedScore value() const { return threats<WHITE>() - threats<BLACK>(); }
+    TaperedScore value() const { return threats_value() + checks_value(); }
+    TaperedScore threats_value() const { return threats<WHITE>() - threats<BLACK>(); }
+    TaperedScore checks_value() const { return king_checks<WHITE>() - king_checks<BLACK>(); }
 
    private:
     template<Color Us>
@@ -273,6 +279,8 @@ class Evaluation {
     void pieces();
     template<Color Us>
     TaperedScore threats() const;
+    template<Color Us>
+    TaperedScore king_checks() const;
 
     const Position& pos;
     Bitboard        occupied;
@@ -418,6 +426,40 @@ TaperedScore Evaluation::threats() const {
     return score;
 }
 
+// Unblockable checks, a duck chess form of Stockfish 11's safe checks: returns
+// the penalty for the king of the given color by the kinds of enemy pieces
+// that can attack it next move from a safe square in a way the duck can't
+// block: a knight, or a queen, rook or bishop next to the king. The defender
+// places the duck after its own move, so it can block an attack from further
+// away. A square is safe for the enemy, as in Stockfish 11, when we don't
+// attack it, or attack it only with our king or queen while they attack it
+// twice.
+template<Color Us>
+TaperedScore Evaluation::king_checks() const {
+
+    constexpr Color Them = ~Us;
+
+    if (!pos.pieces(Us, KING))
+        return SCORE_ZERO;
+
+    Square ksq = pos.square<KING>(Us);
+
+    // Attacked squares defended at most once by our queen or king
+    Bitboard weak = attackedBy[Them][ALL_PIECES] & ~attackedBy2[Us]
+                  & (~attackedBy[Us][ALL_PIECES] | attackedBy[Us][KING] | attackedBy[Us][QUEEN]);
+
+    // Squares from which the enemy can attack our king and not be taken at once
+    Bitboard safe = ~pos.pieces(Them) & (~attackedBy[Us][ALL_PIECES] | (weak & attackedBy2[Them]));
+    Bitboard near = Attacks::attacks_bb(KING, ksq) & safe;
+
+    int checks = bool(Attacks::attacks_bb(KNIGHT, ksq, occupied) & attackedBy[Them][KNIGHT] & safe)
+               + bool(near & attackedBy[Them][QUEEN])
+               + bool(near & Attacks::attacks_bb(ROOK, ksq, occupied) & attackedBy[Them][ROOK])
+               + bool(near & Attacks::attacks_bb(BISHOP, ksq, occupied) & attackedBy[Them][BISHOP]);
+
+    return -(UnblockableCheck * checks);
+}
+
 // Duck shield, as in wakwak: returns how many attacks on the king of the side
 // to move its duck can't block. The side to move is about to move the duck, so
 // it counts as lifted. An attack by a knight, pawn or king, or by a slider
@@ -457,8 +499,9 @@ int king_danger(const Position& pos) {
 
 // Evaluates the position from the point of view of the side to move: material
 // and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, threats on enemy pieces, and the danger to the king of
-// the side to move, tapered by the game phase.
+// shelter of the kings, threats on enemy pieces, the enemy checks the duck
+// can't block, and the danger to the king of the side to move, tapered by the
+// game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
@@ -506,8 +549,10 @@ std::string Eval::trace(Position& pos) {
        << mg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos)) << ", eg "
        << eg_value(king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos))
        << " (white side, internal units)\n";
-    ss << "Threats                  mg " << mg_value(Evaluation(pos).value()) << ", eg "
-       << eg_value(Evaluation(pos).value()) << " (white side, internal units)\n";
+    ss << "Threats                  mg " << mg_value(Evaluation(pos).threats_value()) << ", eg "
+       << eg_value(Evaluation(pos).threats_value()) << " (white side, internal units)\n";
+    ss << "Unblockable checks       mg " << mg_value(Evaluation(pos).checks_value()) << ", eg "
+       << eg_value(Evaluation(pos).checks_value()) << " (white side, internal units)\n";
     ss << "King danger (duck shield) " << king_danger(pos) << " for the side to move, penalty "
        << interpolate(DuckShield * (king_danger(pos) * king_danger(pos)), phase)
        << " (internal units)\n";
