@@ -103,11 +103,24 @@ int pawn_defended(const Position& pos) {
 
 // Passed pawns, as in Stockfish 11: returns the bonus for the pawns of the
 // given color that no enemy pawn stands in front of or next to on their way to
-// promotion, by their rank, less a little for each file away from the edge. A
-// passed pawn with another pawn in front of it gets half. The duck doesn't
-// count, as it moves every turn.
+// promotion, by their rank, less a little for each file away from the edge. From
+// the fourth rank on, the bonus grows in the endgame the further the enemy king
+// is from the square in front of the pawn, and the closer our king is. A passed
+// pawn with another pawn in front of it gets half. The duck doesn't count, as it
+// moves every turn.
 template<Color Us>
 TaperedScore passed_pawns(const Position& pos) {
+
+    constexpr Color     Them = ~Us;
+    constexpr Direction Up   = pawn_push(Us);
+
+    // The distance of a king to a square, at most 5
+    auto king_proximity = [&](Color c, Square s) {
+        return std::min(distance(pos.square<KING>(c), s), 5);
+    };
+
+    // A side may have lost its king, and the game ends then
+    bool bothKings = pos.pieces(WHITE, KING) && pos.pieces(BLACK, KING);
 
     TaperedScore score = SCORE_ZERO;
 
@@ -118,7 +131,22 @@ TaperedScore passed_pawns(const Position& pos) {
         if (!pos.pawn_passed(Us, s))
             continue;
 
-        TaperedScore bonus = PassedRank[relative_rank(Us, s)];
+        int          r     = relative_rank(Us, s);
+        TaperedScore bonus = PassedRank[r];
+
+        if (r > RANK_3 && bothKings)
+        {
+            int    w       = 5 * r - 13;
+            Square blockSq = s + Up;
+
+            // Adjust bonus based on the king's proximity
+            bonus += make_score(
+              0, ((king_proximity(Them, blockSq) * 19) / 4 - king_proximity(Us, blockSq) * 2) * w);
+
+            // If blockSq is not the queening square then consider also a second push
+            if (r != RANK_7)
+                bonus -= make_score(0, king_proximity(Us, blockSq + Up) * w);
+        }
 
         // Scale down the bonus when a pawn stands in front of it
         if (pos.pieces(PAWN) & forward_file_bb(Us, s))
