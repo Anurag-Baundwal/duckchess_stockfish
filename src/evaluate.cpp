@@ -64,6 +64,12 @@ constexpr TaperedScore PassedRank[RANK_NB] = {
   make_score(62, 72), make_score(168, 177), make_score(276, 260)};
 constexpr TaperedScore PassedFile = make_score(11, 8);
 
+// Pawn penalties, Stockfish 11's values
+constexpr TaperedScore Backward      = make_score(9, 24);
+constexpr TaperedScore Doubled       = make_score(11, 56);
+constexpr TaperedScore Isolated      = make_score(5, 15);
+constexpr TaperedScore WeakUnopposed = make_score(13, 27);
+
 // clang-format off
 
 // ShelterStrength[distance from edge][rank] contains the bonus for our pawn
@@ -99,6 +105,59 @@ constexpr TaperedScore BlockedStorm = make_score(82, 82);
 template<Color Us>
 int pawn_defended(const Position& pos) {
     return popcount(pawn_attacks_bb<Us>(pos.pieces(Us, PAWN)) & pos.pieces(Us));
+}
+
+// Pawn weaknesses, as in Stockfish 11: returns the penalty for the pawns of the
+// given color that are isolated (no pawn of ours on the adjacent files),
+// backward (behind our pawns on the adjacent files, and an enemy pawn blocks
+// them or attacks the square in front), or doubled (our pawn right behind them
+// and none beside it to support them). An isolated or backward pawn with no
+// enemy pawn in front of it, an easy target, gets a larger penalty. The duck
+// doesn't count, as it moves every turn.
+template<Color Us>
+TaperedScore pawn_weaknesses(const Position& pos) {
+
+    constexpr Color     Them = ~Us;
+    constexpr Direction Up   = pawn_push(Us);
+
+    Bitboard ourPawns   = pos.pieces(Us, PAWN);
+    Bitboard theirPawns = pos.pieces(Them, PAWN);
+
+    TaperedScore score = SCORE_ZERO;
+
+    for (Bitboard b = ourPawns; b;)
+    {
+        Square s = pop_lsb(b);
+
+        // Flag the pawn
+        Bitboard opposed    = theirPawns & forward_file_bb(Us, s);
+        Bitboard blocked    = theirPawns & (s + Up);
+        Bitboard leverPush  = theirPawns & pawn_attacks_bb<Us>(square_bb(s + Up));
+        bool     doubled    = ourPawns & (s - Up);
+        Bitboard neighbours = ourPawns & adjacent_files_bb(s);
+        Bitboard phalanx    = neighbours & rank_bb(s);
+        Bitboard support    = neighbours & rank_bb(s - Up);
+
+        // A pawn is backward when it is behind all pawns of the same color on
+        // the adjacent files and cannot safely advance.
+        bool backward = !(neighbours & forward_ranks_bb(Them, s + Up)) && (leverPush | blocked);
+
+        // A pawn that has one of ours beside it or supporting it is neither
+        // isolated nor backward
+        if (!(support | phalanx))
+        {
+            if (!neighbours)
+                score -= Isolated + WeakUnopposed * !opposed;
+
+            else if (backward)
+                score -= Backward + WeakUnopposed * !opposed;
+        }
+
+        if (!support)
+            score -= Doubled * doubled;
+    }
+
+    return score;
 }
 
 // Passed pawns, as in Stockfish 11: returns the bonus for the pawns of the
@@ -240,17 +299,17 @@ int king_danger(const Position& pos) {
 }  // namespace
 
 // Evaluates the position from the point of view of the side to move: material
-// and piece-square tables, pawn-defended pieces, passed pawns, the pawn
-// shelter of the kings, and the danger to the king of the side to move,
-// tapered by the game phase.
+// and piece-square tables, pawn-defended pieces, pawn weaknesses, passed
+// pawns, the pawn shelter of the kings, and the danger to the king of the side
+// to move, tapered by the game phase.
 Value Eval::evaluate(const Position& pos) {
 
     int          phase  = game_phase(pos);
     int          danger = king_danger(pos);
-    TaperedScore score  = pos.psq_score()
-                       + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
-                       + passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)
-                       + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos);
+    TaperedScore score =
+      pos.psq_score() + PawnDefended * (pawn_defended<WHITE>(pos) - pawn_defended<BLACK>(pos))
+      + pawn_weaknesses<WHITE>(pos) - pawn_weaknesses<BLACK>(pos) + passed_pawns<WHITE>(pos)
+      - passed_pawns<BLACK>(pos) + king_shelter<WHITE>(pos) - king_shelter<BLACK>(pos);
     Value v = interpolate(score, phase);
 
     v = pos.side_to_move() == WHITE ? v : -v;
@@ -282,6 +341,10 @@ std::string Eval::trace(Position& pos) {
     ss << "Pawn-defended pieces     white " << pawn_defended<WHITE>(pos) << ", black "
        << pawn_defended<BLACK>(pos) << " (each mg " << mg_value(PawnDefended) << ", eg "
        << eg_value(PawnDefended) << ")\n";
+    ss << "Pawn weaknesses          mg "
+       << mg_value(pawn_weaknesses<WHITE>(pos) - pawn_weaknesses<BLACK>(pos)) << ", eg "
+       << eg_value(pawn_weaknesses<WHITE>(pos) - pawn_weaknesses<BLACK>(pos))
+       << " (white side, internal units)\n";
     ss << "Passed pawns             mg "
        << mg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos)) << ", eg "
        << eg_value(passed_pawns<WHITE>(pos) - passed_pawns<BLACK>(pos))
