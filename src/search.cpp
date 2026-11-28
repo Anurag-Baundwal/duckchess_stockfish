@@ -297,9 +297,14 @@ bool Search::Worker::iterative_deepening() {
     Depth       lastBestMoveDepth = 0;
     Value       lastBestMoveScore = -VALUE_INFINITE;
 
+    // For the time management: the best move of the last iteration, and for
+    // how many iterations it and its duck square have stayed the same
+    Move lastIterationBest = Move::none();
+    int  moveStability = 0, duckStability = 0;
+
     Value  bestValue     = -VALUE_INFINITE;
-    double timeReduction = 1, totBestMoveChanges = 0;
-    int    iterIdx = 0;
+    double timeReduction = 1;
+    int    iterIdx       = 0;
 
     // Allocate stack with extra size to allow access from (ss - 7) to (ss + 2)
     Stack  stack[MAX_PLY + 10] = {};
@@ -548,36 +553,24 @@ bool Search::Worker::iterative_deepening() {
         // Do we have time for the next iteration? Can we stop searching now?
         if (limits.use_time_management() && !threads.stop && !mainThread->stopOnPonderhit)
         {
-            u64 nodesEffort = rootMoves[0].effort * 100000 / std::max(u64(1), u64(nodes));
+            // Time management as in wakwak: from depth 4, more time than the
+            // optimum while the best move or its duck square keep changing
+            // between iterations, less once they are stable.
+            Move best         = rootMoves[0].pv[0];
+            duckStability     = lastIterationBest && best.duck_sq() == lastIterationBest.duck_sq()
+                                ? duckStability + 1
+                                : 0;
+            moveStability     = best == lastIterationBest ? moveStability + 1 : 0;
+            lastIterationBest = best;
 
-            double fallingEval = (11.48 + 2.30 * (mainThread->bestPreviousAverageScore - bestValue)
-                                  + 1.1 * (mainThread->iterValue[iterIdx] - bestValue))
-                               / 100.0;
-            fallingEval = std::clamp(fallingEval, 0.576, 1.728);
-
-            // If the bestMove is stable over several iterations, reduce time accordingly
-            timeReduction = std::clamp(
-              interpolate(double(rootDepth - lastBestMoveDepth), 4.96, 18.79, 0.639, 1.712), 0.629,
-              1.544);
-
-            double reduction =
-              (1.468 + mainThread->previousTimeReduction) / (2.284 * timeReduction);
-
-            // Age out and update PV variability metric
-            totBestMoveChanges /= 2;
             for (auto&& th : threads)
-            {
-                totBestMoveChanges += th->worker->bestMoveChanges;
                 th->worker->bestMoveChanges = 0;
-            }
 
-            double bestMoveInstability = 1.077 + 2.229 * totBestMoveChanges / threads.size();
+            double totalTime = double(mainThread->tm.optimum());
 
-            double highBestMoveEffort = std::clamp(
-              interpolate(i64(nodesEffort), i64(75800), i64(104510), 0.969, 0.714), 0.693, 0.838);
-
-            double totalTime = mainThread->tm.optimum() * fallingEval * reduction
-                             * bestMoveInstability * highBestMoveEffort;
+            if (rootDepth >= 4)
+                totalTime = totalTime * std::max(5210 - 477 * duckStability, 2839) / 4096
+                          * std::max(5470 - 505 * moveStability, 2881) / 4096;
 
             if (rootMoves.size() == 1)
                 // Cap used time to 0.5s for a better viewer experience

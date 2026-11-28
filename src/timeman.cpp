@@ -98,6 +98,21 @@ void TimeManagement::init(Search::LimitsType& limits,
 
     // These numbers are used where multiplications, divisions,
     // or comparisons with constants are involved.
+    // Without moves to go, wakwak's limits: the search stops after an
+    // iteration past the optimum (scaled by the stability of the best move),
+    // and within one at the maximum.
+    if (!useNodesTime && limits.movestogo == 0)
+    {
+        double time = double(std::max(TimePoint(1), limits.time[us] - moveOverhead));
+        double inc  = double(limits.inc[us]);
+        double hard = std::min(time * 4096 / 12271 + inc * 4062 / 4096, time);
+        double soft = std::min(time * 4096 / 101087 + inc * 2015 / 4096, hard);
+
+        optimumTime = TimePoint(std::max(1.0, soft));
+        maximumTime = TimePoint(std::max(1.0, hard));
+        return;
+    }
+
     const i64       scaleFactor = useNodesTime ? npmsec : 1;
     const TimePoint scaledTime  = std::max(TimePoint(1), limits.time[us] / scaleFactor);
 
