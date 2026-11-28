@@ -930,6 +930,12 @@ void Position::undo_move(Move m) {
     assert(pos_is_ok());
 }
 
+// The key of the position with the duck left out, for duckless hashing
+Key Position::duckless_key() const {
+    return adjust_key50(st->duckSquare == SQ_NONE ? st->key
+                                                  : st->key ^ Zobrist::duck[st->duckSquare]);
+}
+
 Key Position::prefetch_key(Move m) const {
     Square from     = m.from_sq();
     Square to       = m.to_sq();
