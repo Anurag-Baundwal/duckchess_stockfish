@@ -128,6 +128,62 @@ Bitboard blocking_ducks(Move m, Color c) {
     return Attacks::between_bb(from, to) | m.duck_sq();
 }
 
+// The key of the rooks, queens and kings, for the major piece correction history
+Key major_key(const Position& pos) {
+    return pos.non_pawn_key(WHITE) ^ pos.non_pawn_key(BLACK) ^ pos.minor_piece_key();
+}
+
+// Correction histories, as in wakwak: how far the search results were from
+// the static evaluation in positions with the same pawns, minor pieces, major
+// pieces, non-pawn pieces of each color, and last moves.
+int correction_value(const Histories& h, const Position& pos, const Stack* ss) {
+
+    constexpr int Size = CorrectionHistorySize;
+
+    Color          us = pos.side_to_move();
+    const PieceTo &p1 = (ss - 1)->pieceTo, &p2 = (ss - 2)->pieceTo, &p3 = (ss - 3)->pieceTo;
+
+    int v = 64 * h.pawnCorr[us][pos.pawn_key() % Size]
+          + 65 * h.minorCorr[us][pos.minor_piece_key() % Size]
+          + 62 * h.majorCorr[us][major_key(pos) % Size]
+          + 66 * h.nonPawnCorr[WHITE][us][pos.non_pawn_key(WHITE) % Size]
+          + 66 * h.nonPawnCorr[BLACK][us][pos.non_pawn_key(BLACK) % Size];
+
+    if (p1.ok() && p2.ok())
+        v += 62 * h.contCorr[0][us][p2.piece][p2.to][p1.piece][p1.to];
+    if (p1.ok() && p3.ok())
+        v += 64 * h.contCorr[1][us][p3.piece][p3.to][p1.piece][p1.to];
+
+    return v / MaxCorrection;
+}
+
+void update_correction_history(
+  Histories& h, const Position& pos, const Stack* ss, Depth depth, int diff) {
+
+    constexpr int Size = CorrectionHistorySize;
+
+    Color          us    = pos.side_to_move();
+    int            bonus = int(i64(diff) * depth * 129 / 1024);
+    const PieceTo &p1 = (ss - 1)->pieceTo, &p2 = (ss - 2)->pieceTo, &p3 = (ss - 3)->pieceTo;
+
+    auto update = [bonus](std::int16_t& e) { gravity<MaxCorrection / 4, MaxCorrection>(e, bonus); };
+
+    update(h.pawnCorr[us][pos.pawn_key() % Size]);
+    update(h.minorCorr[us][pos.minor_piece_key() % Size]);
+    update(h.majorCorr[us][major_key(pos) % Size]);
+    update(h.nonPawnCorr[WHITE][us][pos.non_pawn_key(WHITE) % Size]);
+    update(h.nonPawnCorr[BLACK][us][pos.non_pawn_key(BLACK) % Size]);
+
+    if (p1.ok() && p2.ok())
+        update(h.contCorr[0][us][p2.piece][p2.to][p1.piece][p1.to]);
+    if (p1.ok() && p3.ok())
+        update(h.contCorr[1][us][p3.piece][p3.to][p1.piece][p1.to]);
+}
+
+Value corrected(Value v, int correction) {
+    return std::clamp(v + correction, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
+}
+
 Value value_to_tt(Value v, int ply);
 Value value_from_tt(Value v, int ply, int r50c);
 void  update_all_stats(const Position& pos,
@@ -659,13 +715,19 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     ttData.move  = rootNode ? rootMoves[pvIdx].pv[0] : ttHit ? ttData.move : Move::none();
     ttData.value = ttHit ? value_from_tt(ttData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
 
-    // Step 5. Static evaluation of the position
+    // Step 5. Static evaluation of the position, corrected by the correction
+    // histories. The TT keeps the evaluation before the correction.
+    Value rawEval;
+    int   correction = correction_value(histories, pos, ss);
+
     if (ttHit)
     {
         // Never assume anything about values stored in TT
-        ss->staticEval = eval = ttData.eval;
-        if (!is_valid(eval))
-            ss->staticEval = eval = evaluate(pos);
+        rawEval = ttData.eval;
+        if (!is_valid(rawEval))
+            rawEval = evaluate(pos);
+
+        ss->staticEval = eval = corrected(rawEval, correction);
 
         // ttValue can be used as a better position evaluation
         if (is_valid(ttData.value)
@@ -674,9 +736,10 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     }
     else
     {
-        ss->staticEval = eval = evaluate(pos);
+        rawEval        = evaluate(pos);
+        ss->staticEval = eval = corrected(rawEval, correction);
         ttWriter.write(posKey, VALUE_NONE, PvNode, BOUND_NONE, DEPTH_UNSEARCHED, Move::none(),
-                       ss->staticEval, tt.generation());
+                       rawEval, tt.generation());
     }
 
     // Set up the improving flag, which is true if the current static evaluation
@@ -738,8 +801,8 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // the evaluation is above beta by a margin that grows with depth,
         // assume that the search would fail high too. wakwak's margins, and the
         // result is halfway between the evaluation and beta.
-        if (depth <= 8 && eval - futility_margin(depth, improving) >= beta && !is_win(eval)
-            && !is_loss(beta))
+        if (depth <= 8 && eval - futility_margin(depth, improving) - 243 * correction / 1024 >= beta
+            && !is_win(eval) && !is_loss(beta))
             return (eval * 524 + beta * 500) / 1024;
 
         // Step 7. Razoring. If the static evaluation is far below alpha, check
@@ -763,6 +826,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
             Depth R = (5098 + 355 * depth) / 1024;
 
             ss->currentMove = Move::null();
+            ss->pieceTo     = PieceTo{};
 
             accumulators.push_null();
             pos.do_null_move(st);
@@ -985,7 +1049,8 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                 if (depth >= 3 && searchedMoves > 6 && !capture)
                     r = reduction + 1030 * !PvNode + 1053 * !improving + 1034 * bool(bestMove)
                       + 1024 * (duckCounts[duck] > 1 + histories.duckCount[us][duck] / 32)
-                      - 1057 * kingAttacked - 67 * lmrHistory / 1024;
+                      - 1057 * kingAttacked - 67 * lmrHistory / 1024
+                      - 3018 * std::abs(correction) / 1024;
 
                 Depth d = std::min(std::max(newDepth - r / 1024, 1), newDepth);
 
@@ -1154,8 +1219,15 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                        bestValue >= beta    ? BOUND_LOWER
                        : PvNode && bestMove ? BOUND_EXACT
                                             : BOUND_UPPER,
-                       moveCount != 0 ? depth : std::min(MAX_PLY - 1, depth + 6), bestMove,
-                       ss->staticEval, tt.generation());
+                       moveCount != 0 ? depth : std::min(MAX_PLY - 1, depth + 6), bestMove, rawEval,
+                       tt.generation());
+
+    // Update the correction histories when the search result is on the side
+    // of the static evaluation its bound allows, and the best move is quiet
+    if ((!bestMove || !pos.capture_stage(bestMove))
+        && !(bestValue >= beta && bestValue <= ss->staticEval)
+        && !(!bestMove && bestValue >= ss->staticEval))
+        update_correction_history(histories, pos, ss, depth, bestValue - ss->staticEval);
 
     // The search is now complete
     assert(-VALUE_INFINITE < bestValue && bestValue < VALUE_INFINITE);
@@ -1232,7 +1304,8 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     }
 
     // Step 4. Static evaluation of the position
-    Value staticEval = ttHit && is_valid(ttData.eval) ? ttData.eval : evaluate(pos);
+    Value rawEval    = ttHit && is_valid(ttData.eval) ? ttData.eval : evaluate(pos);
+    Value staticEval = corrected(rawEval, correction_value(histories, pos, ss));
 
     // Stand pat. Return immediately if static value is at least beta
     bestValue = staticEval;
@@ -1241,7 +1314,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     {
         if (!ttHit)
             ttWriter.write(posKey, VALUE_NONE, false, BOUND_LOWER, DEPTH_UNSEARCHED, Move::none(),
-                           staticEval, tt.generation());
+                           rawEval, tt.generation());
         return bestValue;
     }
 
@@ -1371,7 +1444,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     // Step 10. Save gathered info in transposition table
     ttWriter.write(posKey, value_to_tt(bestValue, ss->ply), PvNode,
-                   bestValue >= beta ? BOUND_LOWER : BOUND_UPPER, DEPTH_QS, bestMove, staticEval,
+                   bestValue >= beta ? BOUND_LOWER : BOUND_UPPER, DEPTH_QS, bestMove, rawEval,
                    tt.generation());
 
     // The search is now complete
