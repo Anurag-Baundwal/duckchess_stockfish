@@ -88,6 +88,7 @@ MovePicker::MovePicker(const Position&          p,
     seeThreshold(see),
     skipQuiets(qsearch),
     skipBadNoisy(qsearch),
+    qsearchMode(qsearch),
     stage(TT),
     moves(ms.moves.get() + ms.top),
     start(ms.top) {}
@@ -123,6 +124,31 @@ void MovePicker::generate(ExtMove*) {
             }
 
             ducks &= ~neutralDucks | square_bb(best);
+        }
+
+        // The quiescence search tries at most two duck squares per chess move,
+        // the best ones by duck history, so generate only a few of them
+        if (qsearchMode && popcount(ducks) > 4)
+        {
+            Square best[4];
+            int    n = 0;
+
+            for (Bitboard b = ducks; b;)
+            {
+                Square s = pop_lsb(b);
+                int    i = std::min(n, 3);
+
+                if (n == 4 && histories.duck[us][s] <= histories.duck[us][best[3]])
+                    continue;
+
+                for (; i > 0 && histories.duck[us][s] > histories.duck[us][best[i - 1]]; --i)
+                    best[i] = best[i - 1];
+
+                best[i] = s;
+                n       = std::min(n + 1, 4);
+            }
+
+            ducks = square_bb(best[0]) | best[1] | best[2] | best[3];
         }
 
         Square to = m.to_sq();
@@ -161,21 +187,67 @@ void MovePicker::generate(ExtMove*) {
     stack.top = start + size;
 }
 
-// Sorts the next batch of moves, at least 64 of them, and as many as were
-// already picked since the sorting started
+// Sorts the moves still to be picked, a part at a time. The first call of a
+// stage spreads the moves in buckets by score, best first, in linear time;
+// each bucket is sorted when the picker reaches it. The search prunes most
+// moves of a node, but picks them in order, so a full sort would be wasted.
 void MovePicker::sort_next(int end) {
 
     if (cursor != sortedEnd)
         return;
 
-    int      batch = std::min(std::max(64, cursor - sortStart), end - cursor);
     ExtMove* first = moves + cursor;
+    int      n     = end - cursor;
 
-    if (batch < end - cursor)
-        std::nth_element(first, first + batch, moves + end, greater);
+    if (cursor == sortStart)
+    {
+        bucketIdx = bucketCount = 0;
 
-    std::sort(first, first + batch, greater);
-    sortedEnd = cursor + batch;
+        if (n > 64)
+        {
+            int lo = first[0].value, hi = first[0].value;
+            for (int i = 1; i < n; ++i)
+            {
+                lo = std::min(lo, first[i].value);
+                hi = std::max(hi, first[i].value);
+            }
+
+            // Bucket 0 holds the best moves
+            constexpr int Buckets = 256;
+            auto          bucket  = [&](int v) {
+                return int(i64(hi - v) * (Buckets - 1) / std::max(1, hi - lo));
+            };
+
+            int count[Buckets + 1] = {};
+            for (int i = 0; i < n; ++i)
+                count[bucket(first[i].value) + 1]++;
+            for (int b = 0; b < Buckets; ++b)
+                count[b + 1] += count[b];
+
+            // The scratch space past our moves on the stack
+            ExtMove* tmp = moves + size;
+            for (int i = 0; i < n; ++i)
+                tmp[count[bucket(first[i].value)]++] = first[i];
+            std::copy(tmp, tmp + n, first);
+
+            // count[b] is now the end of bucket b
+            for (int b = 0; b < Buckets; ++b)
+                if (bucketCount == 0 || count[b] != bucketEnds[bucketCount - 1])
+                    bucketEnds[bucketCount++] = cursor + count[b];
+        }
+    }
+
+    if (bucketIdx < bucketCount)
+    {
+        int bEnd = bucketEnds[bucketIdx++];
+        std::sort(first, moves + bEnd, greater);
+        sortedEnd = bEnd;
+    }
+    else
+    {
+        std::sort(first, moves + end, greater);
+        sortedEnd = end;
+    }
 }
 
 // Returns a new move every time it is called, until there are no more moves

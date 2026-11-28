@@ -1090,7 +1090,7 @@ bool Position::see_ge_duck(Move m, int threshold) const {
     if (balance >= 0)
         return true;
 
-    Bitboard occupied = (pieces(WHITE) | pieces(BLACK)) ^ from | to;
+    Bitboard occupied = ((pieces(WHITE) | pieces(BLACK)) ^ from) | to;
     if (m.type_of() == EN_PASSANT)
         occupied ^= make_square(file_of(to), rank_of(from));
 

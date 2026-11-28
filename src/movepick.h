@@ -101,11 +101,13 @@ class MovePicker {
     Bitboard                 threats, neutralDucks;
     bool                     pruneQuietNeutrals, pruneNoisyNeutrals;
     int                      seeThreshold;
-    bool                     skipQuiets = false, skipBadNoisy = false;
+    bool                     skipQuiets = false, skipBadNoisy = false, qsearchMode = false;
     Stages                   stage;
 
     ExtMove* moves;  // Our part of the stack: the captures, then the quiets
     int      start, size = 0, cursor = 0, sortStart = 0, sortedEnd = 0, badCount = 0;
+    int      bucketIdx = 0, bucketCount = 0;
+    int      bucketEnds[256];
 };
 
 }  // namespace Stockfish
