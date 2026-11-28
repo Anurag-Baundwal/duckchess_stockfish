@@ -111,8 +111,9 @@ struct Stack {
     int      ply;
     Move     currentMove;
     Value    staticEval;
-    Move     reply;  // A good move here (it raised alpha, or the TT move of a
-                     // TT cutoff): the reply to the move at the ply above
+    int      reduction;  // Late move reduction of the move being searched, in 1/1024 ply
+    Move     reply;      // A good move here (it raised alpha, or the TT move of a
+                         // TT cutoff): the reply to the move at the ply above
 };
 
 
@@ -304,6 +305,9 @@ class Worker {
     NNUE::AccumulatorStack accumulators;
 
    private:
+    // The ply of a null move verification search in progress, or -1
+    int nmrPly = -1;
+
     bool iterative_deepening();
 
     void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);

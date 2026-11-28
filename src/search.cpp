@@ -58,8 +58,17 @@ using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 // Add a small random component to draw evaluations to avoid 3-fold blindness
 Value value_draw(usize nodes) { return VALUE_DRAW - 1 + Value(nodes & 0x2); }
 
-// Futility margin, as in Stockfish 11
-Value futility_margin(Depth d, bool improving) { return Value(217 * (d - improving)); }
+// Reverse futility margin, wakwak's
+Value futility_margin(Depth d, bool improving) {
+    return Value((improving ? -42 : -5) + d * (35 + 6 * d));
+}
+
+// Late move reduction in 1/1024 ply for a quiet move, before adjustments, from
+// the depth and the number of chess moves searched so far, wakwak's
+int base_reduction(Depth d, int uniqueMoves) {
+    auto log2 = [](int x) { return 31 - __builtin_clz(unsigned(x)); };
+    return 1011 + 97 * log2(d) * log2(uniqueMoves + 1);
+}
 
 // Whether a piece of the opponent attacks the king of the side to move, with
 // the duck lifted, as the side to move has to move it and may open the line.
@@ -304,19 +313,65 @@ bool Search::Worker::iterative_deepening() {
             // Reset UCI info selDepth for each depth and each PV line
             selDepth = 0;
 
-            // Search with the full window. Adjust the effective depth searched,
-            // but ensure at least one effective increment for every four
-            // searchAgain steps (see issue #2717).
-            Depth adjustedDepth = std::max(1, rootDepth - 3 * (searchAgainCounter + 1) / 4);
-            bestValue = search<Root>(rootPos, ss, -VALUE_INFINITE, VALUE_INFINITE, adjustedDepth);
+            // Reset aspiration window starting size, with wakwak's values
+            Value avg   = rootMoves[pvIdx].averageScore;
+            Value delta = 21;
+            Value alpha = -VALUE_INFINITE, beta = VALUE_INFINITE;
 
-            // Bring the best move to the front. It is critical that sorting
-            // is done with a stable algorithm because all the values but the
-            // first and eventually the new best one is set to -VALUE_INFINITE
-            // and we want to keep the same order for all the moves except the
-            // new PV that goes to the front. Note that in the case of MultiPV
-            // search the already searched PV lines are preserved.
-            std::stable_sort(rootMoves.begin() + pvIdx, rootMoves.begin() + pvLast);
+            if (rootDepth >= 4 && avg != -VALUE_INFINITE)
+            {
+                alpha = std::max(avg - delta, -VALUE_INFINITE);
+                beta  = std::min(avg + delta, VALUE_INFINITE);
+            }
+
+            // Adjust the effective depth searched, but ensure at least one
+            // effective increment for every four searchAgain steps (see issue
+            // #2717).
+            Depth adjustedDepth = std::max(1, rootDepth - 3 * (searchAgainCounter + 1) / 4);
+
+            // Start with a small aspiration window and, in the case of a fail
+            // high/low, re-search with a bigger window until we don't fail
+            // high/low anymore.
+            while (true)
+            {
+                nmrPly    = -1;
+                bestValue = search<Root>(rootPos, ss, alpha, beta, adjustedDepth);
+
+                // Bring the best move to the front. It is critical that sorting
+                // is done with a stable algorithm because all the values but the
+                // first and eventually the new best one is set to -VALUE_INFINITE
+                // and we want to keep the same order for all the moves except the
+                // new PV that goes to the front. Note that in the case of MultiPV
+                // search the already searched PV lines are preserved.
+                std::stable_sort(rootMoves.begin() + pvIdx, rootMoves.begin() + pvLast);
+
+                // If search has been stopped, we break immediately. Sorting is
+                // safe because RootMoves is still valid, although it refers to
+                // the previous iteration.
+                if (threads.stop)
+                    break;
+
+                // When failing high/low give some update before a re-search
+                if (mainThread && multiPV == 1 && (bestValue <= alpha || bestValue >= beta)
+                    && nodes > NODES_LIMIT_OUTPUT)
+                    main_manager()->output_pv(*this, threads, tt, rootDepth);
+
+                // In case of failing low/high increase aspiration window and re-search,
+                // otherwise exit the loop.
+                if (bestValue <= alpha)
+                {
+                    beta  = (alpha * 509 + beta * 515) / 1024;
+                    alpha = std::max(bestValue - delta, -VALUE_INFINITE);
+                }
+                else if (bestValue >= beta)
+                    beta = std::min(bestValue + delta, VALUE_INFINITE);
+                else
+                    break;
+
+                delta += delta * 127 / 64;
+
+                assert(alpha >= -VALUE_INFINITE && beta <= VALUE_INFINITE);
+            }
 
             if (threads.stop && pvIdx)
             {
@@ -631,9 +686,13 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     }
 
     // Set up the improving flag, which is true if the current static evaluation
-    // is bigger than the previous static evaluation at our turn, and is false
-    // otherwise
-    improving = ss->staticEval > (ss - 2)->staticEval;
+    // is bigger than the previous static evaluation at our turn (two plies ago,
+    // or four if that one is missing), and true without either, as in wakwak.
+    improving = is_valid((ss - 2)->staticEval) ? ss->staticEval > (ss - 2)->staticEval
+              : is_valid((ss - 4)->staticEval) ? ss->staticEval > (ss - 4)->staticEval
+                                               : true;
+
+    ss->reduction = 0;
 
     // Step 6. At non-PV nodes we check for an early TT cutoff. Note that we
     //         always check the validity of the TT value because of access races.
@@ -647,14 +706,72 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         return ttData.value;
     }
 
-    // Step 9. Futility pruning: child node (reverse futility pruning), in
-    // Stockfish 11's form. If the static evaluation is above beta by a margin
-    // that grows with depth, assume that the search would fail high too, and
-    // return the evaluation. Not when the king of the side to move is attacked:
-    // the evaluation can't tell whether the king can be saved.
-    if (!PvNode && depth < 6 && eval - futility_margin(depth, improving) >= beta && !is_win(eval)
-        && !king_attacked(pos))
-        return eval;
+    if (!PvNode)
+    {
+        // Hindsight extension, as in wakwak: if the parent reduced this node a
+        // lot but the static evaluation got better for us since then, extend.
+        if ((ss - 1)->reduction >= 3066 && is_valid((ss - 1)->staticEval)
+            && ss->staticEval + (ss - 1)->staticEval < 0)
+            depth = std::min(depth + 1, MAX_PLY - 1);
+
+        // Step 9. Futility pruning: child node (reverse futility pruning). If
+        // the evaluation is above beta by a margin that grows with depth,
+        // assume that the search would fail high too. wakwak's margins, and the
+        // result is halfway between the evaluation and beta.
+        if (depth <= 8 && eval - futility_margin(depth, improving) >= beta && !is_win(eval)
+            && !is_loss(beta))
+            return (eval * 524 + beta * 500) / 1024;
+
+        // Step 7. Razoring. If the static evaluation is far below alpha, check
+        // with a quiescence search whether the node fails low.
+        if (ss->staticEval + 317 + 253 * depth <= alpha)
+        {
+            value = qsearch<NonPV>(pos, ss, alpha, alpha + 1);
+            if (value <= alpha)
+                return value;
+        }
+
+        // Step 8. Null move reduction, as in wakwak. Passing is rarely the best
+        // move, but duck chess has many zugzwangs, so a null move that fails
+        // high only leads to a search at half the depth, which must fail high
+        // too. Only inside such a search does a null move prune at once. The
+        // duck leaves the board for the null move, so that the opponent can put
+        // it anywhere.
+        if (depth >= 4 && nmrPly != ss->ply && (ss - 1)->reply && eval >= beta + 19
+            && (pos.pieces(WHITE) | pos.pieces(BLACK)) != pos.pieces(KING, PAWN))
+        {
+            Depth R = (5098 + 355 * depth) / 1024;
+
+            ss->currentMove = Move::null();
+
+            accumulators.push_null();
+            pos.do_null_move(st);
+
+            Value nullValue = -search<NonPV>(pos, ss + 1, -beta, -beta + 1, depth - R);
+
+            pos.undo_null_move();
+            accumulators.pop();
+
+            if (threads.stop.load(std::memory_order_relaxed))
+                return VALUE_ZERO;
+
+            if (nullValue >= beta && !is_win(nullValue))
+            {
+                if (nmrPly != -1)
+                    return nullValue;
+
+                nmrPly  = ss->ply;
+                Value v = search<NonPV>(pos, ss, beta - 1, beta, depth / 2);
+                nmrPly  = -1;
+
+                if (v >= beta)
+                    return v;
+            }
+        }
+    }
+
+    // Whether the king of the side to move is attacked, for the reductions
+    bool kingAttacked = king_attacked(pos);
 
     MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
 
@@ -665,9 +782,12 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     Bitboard safeDucks     = 0;
 
     // The chess move being tried, and with how many duck squares it was
-    // searched so far
+    // searched so far (madeCount also counts the Duck or Die losses)
     Move chessMove = Move::none();
-    int  duckCount = 0;
+    int  duckCount = 0, madeCount = 0;
+
+    // How many moves, and how many different chess moves, were made so far
+    int searchedMoves = 0, uniqueMoves = 0;
 
     // For duck refutations: by destination square, the last chess move to it
     // and the duck squares that leave a good reply to it unblocked
@@ -711,21 +831,55 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         if (move.chess_move() != chessMove)
         {
             chessMove = move.chess_move();
-            duckCount = 0;
+            duckCount = madeCount = 0;
         }
 
+        int   reduction = base_reduction(depth, uniqueMoves);
+        Depth lmrDepth  = std::max(0, depth - reduction / 1024);
+
+        // The history of a quiet move: chess move and duck square, on wakwak's
+        // scale (16384 at most for each)
+        int history = capture ? 0
+                              : (mainHistory[pos.side_to_move()][move.chess_raw()]
+                                 + duckHistory(pos.side_to_move(), move.duck_sq()))
+                                  * 16384 / 7183;
+
         // Step 14. Pruning at shallow depth
-        if (!PvNode && !is_loss(bestValue))
+        if (!rootNode && !is_loss(bestValue))
         {
             // Late duck pruning. The duck squares of a chess move come in duck
             // history order, best first. For a quiet chess move, stop once a
             // few of them have been searched (Duck or Die losses don't count).
-            if (!capture && depth <= 8 && duckCount >= 2 + 2 * depth)
+            if (!PvNode && !capture && depth <= 8 && duckCount >= 2 + 2 * depth)
             {
                 mp.skip_ducks();
                 continue;
             }
+
+            if (!capture)
+            {
+                // Futility pruning for quiet moves, wakwak's margin
+                if (lmrDepth <= 8
+                    && ss->staticEval + 99 + 93 * lmrDepth
+                           + std::clamp((history + 3956) / 61, -419, 359)
+                         <= alpha)
+                {
+                    mp.skip_quiets();
+                    continue;
+                }
+
+                // Late move pruning by the number of chess moves searched, as
+                // wakwak's unique move pruning
+                if (!madeCount && uniqueMoves > (3994 + 1412 * depth * depth) / 1024)
+                {
+                    mp.skip_quiets();
+                    continue;
+                }
+            }
         }
+
+        uniqueMoves += !madeCount++;
+        searchedMoves++;
 
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
@@ -757,10 +911,28 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         {
             ++duckCount;
 
-            // Step 19. Principal variation search: every move except the first
-            // one of a PV node is searched with a null window around alpha.
+            Depth newDepth = depth - 1;
+
             if (!PvNode || moveCount > 1)
-                value = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, depth - 1);
+            {
+                // Step 18. Late moves reduction, as in wakwak: a quiet move
+                // after the first six is searched at a reduced depth first,
+                // then at full depth if it raises alpha.
+                int r = 0;
+                if (depth >= 3 && searchedMoves > 7 && !capture)
+                    r = reduction + 1030 * !PvNode + 1053 * !improving + 1034 * bool(bestMove)
+                      - 1057 * kingAttacked - 67 * history / 1024;
+
+                Depth d = std::min(std::max(newDepth - r / 1024, 1), newDepth);
+
+                ss->reduction = r;
+                value         = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, d);
+                ss->reduction = 0;
+
+                // Step 19. Full-depth search when the reduced search raises alpha
+                if (value > alpha && d < newDepth)
+                    value = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, newDepth);
+            }
 
             // Step 20. For PV nodes only, do a full PV search on the first move
             // or after a fail high, otherwise let the parent node fail low with
@@ -770,7 +942,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                 (ss + 1)->pv = &pv;
                 (ss + 1)->pv->clear();
 
-                value = -search<PV>(pos, ss + 1, -beta, -alpha, depth - 1);
+                value = -search<PV>(pos, ss + 1, -beta, -alpha, newDepth);
             }
         }
 

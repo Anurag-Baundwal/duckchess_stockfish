@@ -369,7 +369,7 @@ std::vector<std::string> setup_bench(const std::string& currentFen, std::istream
     // Assign default values to missing arguments
     std::string ttSize    = (is >> token) ? token : "16";
     std::string threads   = (is >> token) ? token : "1";
-    std::string limit     = (is >> token) ? token : "3";
+    std::string limit     = (is >> token) ? token : "7";
     std::string fenFile   = (is >> token) ? token : "default";
     std::string limitType = (is >> token) ? token : "depth";
 

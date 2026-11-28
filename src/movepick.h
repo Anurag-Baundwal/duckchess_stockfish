@@ -46,6 +46,7 @@ class MovePicker {
     MovePicker(const Position&, Move, Depth, const ButterflyHistory*, const DuckHistory*);
     Move next_move();
     void skip_ducks();
+    void skip_quiets();
 
    private:
     Move next_chess_move();
@@ -64,6 +65,7 @@ class MovePicker {
     ExtMove *               cur, *endCur;
     Stages                  stage;
     Stages                  first_stage;
+    bool                    skipQuiets = false;
     ExtMove                 moves[MAX_MOVES];
 };
 

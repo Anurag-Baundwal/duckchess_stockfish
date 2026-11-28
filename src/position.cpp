@@ -985,7 +985,16 @@ void Position::do_null_move(StateInfo& newSt) {
 
     st->key ^= Zobrist::side;
 
+    // The duck leaves the board, so that the opponent can put it anywhere
+    if (st->duckSquare != SQ_NONE)
+    {
+        st->key ^= Zobrist::duck[st->duckSquare];
+        byTypeBB[ALL_PIECES] ^= st->duckSquare;
+        st->duckSquare = SQ_NONE;
+    }
+
     st->pliesFromNull = 0;
+    st->rule50        = 0;
 
     st->capturedPiece = NO_PIECE;
 
@@ -1002,6 +1011,9 @@ void Position::undo_null_move() {
 
     st         = st->previous;
     sideToMove = ~sideToMove;
+
+    if (st->duckSquare != SQ_NONE)
+        byTypeBB[ALL_PIECES] |= st->duckSquare;
 }
 
 

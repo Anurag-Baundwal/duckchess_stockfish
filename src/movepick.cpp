@@ -233,6 +233,8 @@ dispatch:
         [[fallthrough]];
 
     case QUIET :
+        return skipQuiets ? Move::none() : select();
+
     case QSEARCH :
         return select();
 
@@ -244,5 +246,13 @@ dispatch:
 
 // Skips the remaining duck squares of the current chess move
 void MovePicker::skip_ducks() { duckIdx = SQUARE_NB; }
+
+// Skips the quiet chess moves still to come, and the remaining duck squares of
+// the current chess move if it is quiet
+void MovePicker::skip_quiets() {
+    skipQuiets = true;
+    if (stage == QUIET)
+        skip_ducks();
+}
 
 }  // namespace Stockfish
