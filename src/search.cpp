@@ -700,6 +700,32 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         return ttData.value;
     }
 
+    // Duckless hashing, as in wakwak: the position with the duck elsewhere
+    // often has the same best move. A second TT entry, keyed without the duck,
+    // holds the best move of a fail high or PV node and its lower bound. Use
+    // the move if it is legal here, and the bound for a cutoff at non-PV nodes.
+    if (!rootNode && (!PvNode || !ttData.move) && pos.duck_square() != SQ_NONE)
+    {
+        auto [dHit, dData, dWriter] = tt.probe(pos.duckless_key());
+        Value dValue = dHit ? value_from_tt(dData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
+
+        if (dHit && dData.bound == BOUND_LOWER && is_valid(dValue) && !is_decisive(dValue))
+        {
+            bool cutoff = !PvNode && dData.depth >= depth && dValue >= beta;
+
+            if ((cutoff || !ttData.move) && dData.move && pos.legal(dData.move))
+            {
+                if (cutoff)
+                {
+                    ss->reply = dData.move;
+                    return dValue;
+                }
+
+                ttData.move = dData.move;
+            }
+        }
+    }
+
     if (!PvNode)
     {
         // Hindsight extension, as in wakwak: if the parent reduced this node a
@@ -1113,7 +1139,16 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     if (!moveCount)
         bestValue = mate_in(ss->ply);
 
-    // Step 24. Write gathered information in transposition table
+    // Step 24. Write gathered information in transposition table, and for
+    // duckless hashing the best move of a fail high or PV node
+    if (pos.duck_square() != SQ_NONE && bestMove && (bestValue >= beta || PvNode)
+        && !is_decisive(bestValue))
+    {
+        [[maybe_unused]] auto [dHit, dData, dWriter] = tt.probe(pos.duckless_key());
+        dWriter.write(pos.duckless_key(), value_to_tt(bestValue, ss->ply), PvNode, BOUND_LOWER,
+                      depth, bestMove, VALUE_NONE, tt.generation());
+    }
+
     if (!(rootNode && pvIdx))
         ttWriter.write(posKey, value_to_tt(bestValue, ss->ply), PvNode,
                        bestValue >= beta    ? BOUND_LOWER
