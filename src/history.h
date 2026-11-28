@@ -20,113 +20,78 @@
 #define HISTORY_H_INCLUDED
 
 #include <algorithm>
-#include <array>
-#include <cassert>
+#include <cstdint>
 #include <cstdlib>
-#include <limits>
-#include <type_traits>  // IWYU pragma: keep
+#include <cstring>
 
-#include "misc.h"
 #include "types.h"
 
 namespace Stockfish {
 
-constexpr int UINT_16_HISTORY_SIZE = std::numeric_limits<u16>::max() + 1;
+// The move histories, as in wakwak: every table holds i16 values in
+// [-MaxHistory, MaxHistory], updated with the "gravity" formula, so that a
+// value moves toward the bonus by an amount that shrinks near the limit.
+constexpr int MaxHistory            = 16384;
+constexpr int MaxCorrection         = 1024;
+constexpr int PawnHistorySize       = 4096;
+constexpr int CorrectionHistorySize = 16384;
 
-// StatsEntry is the container of various numerical statistics. We use a class
-// instead of a naked value to directly call history update operator<<() on
-// the entry. The first template parameter T is the base type of the array,
-// and the second template parameter D limits the range of updates in [-D, D]
-// when we update values with the << operator
-template<typename T, int D, bool Shared = false>
-struct StatsEntry {
-    static_assert(std::is_integral_v<T> && std::is_signed_v<T>, "Not a signed integer type");
-    static_assert(D > 0 && D <= std::numeric_limits<T>::max()
-                    && D <= std::numeric_limits<int>::max() / D,
-                  "D can lead to overflows");
+// Adds a bonus to an entry; the decay is usually the entry itself, but the
+// continuation histories use the sum of the entries a move has.
+template<int MaxBonus, int MaxValue>
+inline void gravity(std::int16_t& entry, int decay, int bonus) {
+    bonus = std::clamp(bonus, -MaxBonus, MaxBonus);
+    entry += std::int16_t(bonus - decay * std::abs(bonus) / MaxValue);
+}
 
-   private:
-    std::conditional_t<Shared, RelaxedAtomic<T>, T> entry;
+template<int MaxBonus, int MaxValue>
+inline void gravity(std::int16_t& entry, int bonus) {
+    gravity<MaxBonus, MaxValue>(entry, entry, bonus);
+}
 
-   public:
-    void operator=(const T& v) { entry = v; }
+// Index of a piece type in the history tables
+inline int piece_index(Piece pc) { return type_of(pc) - 1; }
 
-    operator T() const { return entry; }
+// A move as continuation histories see it: the piece and its destination
+struct PieceTo {
+    std::int8_t piece = -1;  // -1 if there is no such move (null move, before the root)
+    Square      to    = SQ_A1;
 
-    void operator<<(int bonus) {
-        // Make sure that bonus is in range [-D, D]
-        int clampedBonus = std::clamp(bonus, -D, D);
-        T   val          = *this;
-        *this            = val + clampedBonus - val * std::abs(clampedBonus) / D;
-
-        assert(std::abs(T(*this)) <= D);
-    }
+    bool ok() const { return piece >= 0; }
 };
 
-template<typename T, int D, usize... Sizes>
-using Stats = MultiArray<StatsEntry<T, D>, Sizes...>;
-
-// ButterflyHistory records how often quiet moves have been successful or unsuccessful
-// during the current search, and is used for move ordering decisions.
-// It uses 2 tables (one for each color) indexed by the move's from and to squares,
-// see https://www.chessprogramming.org/Butterfly_Boards
-using ButterflyHistory = Stats<i16, 7183, COLOR_NB, UINT_16_HISTORY_SIZE>;
-
-// DuckHistory records how often each square the side to move put the duck on was
-// part of a successful or unsuccessful move, and orders the duck squares of each
-// chess move. It also keeps each color's 64 squares sorted by their entries, best
-// first, moving a square only as far as an update requires, so that the move
-// picker never sorts duck squares itself.
-class DuckHistory {
-    using Entry = StatsEntry<i16, 7183>;
-
-   public:
-    using Order = std::array<Square, SQUARE_NB>;
+struct Histories {
 
     void clear() {
-        for (Color c : {WHITE, BLACK})
-            for (Square s = SQ_A1; s <= SQ_H8; ++s)
-            {
-                entries[c][s] = 0;
-                order[c][s]   = s;
-                index[c][s]   = u8(s);
-            }
+        std::memset(this, 0, sizeof(*this));
+        for (auto& c : duckCount)
+            for (auto& e : c)
+                e = 2;
     }
 
-    int operator()(Color c, Square s) const { return entries[c][s]; }
+    // [side to move][from][to][from attacked][to attacked]
+    std::int16_t quiet[COLOR_NB][SQUARE_NB][SQUARE_NB][2][2];
+    // [side to move][piece][to][captured piece + 1, or 0]
+    std::int16_t noisy[COLOR_NB][6][SQUARE_NB][7];
+    // [side to move][pawn key][piece][to]
+    std::int16_t pawn[COLOR_NB][PawnHistorySize][6][SQUARE_NB];
+    // [side to move][duck square]
+    std::int16_t duck[COLOR_NB][SQUARE_NB];
+    // [side to move][piece][to][duck square]
+    std::int16_t quietDuck[COLOR_NB][6][SQUARE_NB][SQUARE_NB];
+    // [side to move][duck square]: how many moves with this duck square the
+    // best moves needed, times 32
+    std::int16_t duckCount[COLOR_NB][SQUARE_NB];
+    // [odd/even plies back][side to move][previous piece][previous to][piece][to]
+    std::int16_t cont[2][COLOR_NB][6][SQUARE_NB][6][SQUARE_NB];
 
-    const Order& sorted(Color c) const { return order[c]; }
-
-    void update(Color c, Square s, int bonus) {
-        entries[c][s] << bonus;
-
-        int v = entries[c][s];
-        int i = index[c][s];
-
-        for (; i > 0 && entries[c][order[c][i - 1]] < v; --i)
-            swap(c, i, i - 1);
-
-        for (; i < SQUARE_NB - 1 && entries[c][order[c][i + 1]] > v; ++i)
-            swap(c, i, i + 1);
-    }
-
-    // Scale every entry down. This keeps their order, up to rounding.
-    void age(int num, int den) {
-        for (Color c : {WHITE, BLACK})
-            for (Square s = SQ_A1; s <= SQ_H8; ++s)
-                entries[c][s] = i16(entries[c][s] * num / den);
-    }
-
-   private:
-    void swap(Color c, int i, int j) {
-        std::swap(order[c][i], order[c][j]);
-        index[c][order[c][i]] = u8(i);
-        index[c][order[c][j]] = u8(j);
-    }
-
-    Entry entries[COLOR_NB][SQUARE_NB];
-    Order order[COLOR_NB];
-    u8    index[COLOR_NB][SQUARE_NB];
+    // Correction histories: [side to move][key % size]
+    std::int16_t pawnCorr[COLOR_NB][CorrectionHistorySize];
+    std::int16_t minorCorr[COLOR_NB][CorrectionHistorySize];
+    std::int16_t majorCorr[COLOR_NB][CorrectionHistorySize];
+    std::int16_t nonPawnCorr[COLOR_NB][COLOR_NB][CorrectionHistorySize];
+    // [odd/even][side to move][previous piece][previous to][piece][to]
+    std::int16_t contCorr[2][COLOR_NB][6][SQUARE_NB][6][SQUARE_NB];
 };
 
 }  // namespace Stockfish

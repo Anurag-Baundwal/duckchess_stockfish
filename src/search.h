@@ -31,6 +31,7 @@
 #include <cstring>
 
 #include "history.h"
+#include "movepick.h"
 #include "misc.h"
 #include "nnue.h"
 #include "position.h"
@@ -112,6 +113,7 @@ struct Stack {
     Move     currentMove;
     Value    staticEval;
     int      reduction;  // Late move reduction of the move being searched, in 1/1024 ply
+    PieceTo  pieceTo;    // The moved piece and its destination, for continuation histories
     Move     reply;      // A good move here (it raised alpha, or the TT move of a
                          // TT cutoff): the reply to the move at the ply above
 };
@@ -299,8 +301,8 @@ class Worker {
     bool is_mainthread() const { return threadIdx == 0; }
 
     // Public because they need to be updatable by the stats
-    ButterflyHistory mainHistory;
-    DuckHistory      duckHistory;
+    Histories histories;
+    MoveStack moveStack;
 
     NNUE::AccumulatorStack accumulators;
 

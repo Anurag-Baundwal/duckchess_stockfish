@@ -52,7 +52,7 @@ namespace {
 
 constexpr u64 NODES_LIMIT_OUTPUT = 10'000'000;
 
-constexpr int SEARCHEDLIST_CAPACITY = 32;
+constexpr int SEARCHEDLIST_CAPACITY = 256;
 using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
 
 // Add a small random component to draw evaluations to avoid 3-fold blindness
@@ -132,9 +132,12 @@ Value value_to_tt(Value v, int ply);
 Value value_from_tt(Value v, int ply, int r50c);
 void  update_all_stats(const Position& pos,
                        Search::Worker& workerThread,
+                       Stack*          ss,
                        Move            bestMove,
                        SearchedList&   quietsSearched,
-                       Bitboard        ducksSearched,
+                       SearchedList&   capturesSearched,
+                       const u8*       duckCounts,
+                       Bitboard        threats,
                        Depth           depth);
 
 }  // namespace
@@ -277,11 +280,6 @@ bool Search::Worker::iterative_deepening() {
     int  searchAgainCounter = 0;
     bool uciPvSent          = false;
 
-    for (Color c : {WHITE, BLACK})
-        for (int i = 0; i < UINT_16_HISTORY_SIZE; i++)
-            mainHistory[c][i] = mainHistory[c][i] * 729 / 1024;
-
-    duckHistory.age(729, 1024);
 
     // Iterative deepening loop until requested to stop or the target depth is reached
     while (rootDepth + 1 < MAX_PLY && !threads.stop
@@ -573,10 +571,11 @@ void Search::Worker::do_move(Position& pos, const Move move, StateInfo& st, Stac
 
     ++nodes;
 
+    ss->currentMove = move;
+    ss->pieceTo     = {std::int8_t(piece_index(pos.moved_piece(move))), move.to_sq()};
+
     accumulators.push(pos, move);
     pos.do_move(move, st);
-
-    ss->currentMove = move;
 }
 
 void Search::Worker::undo_move(Position& pos, const Move move) {
@@ -586,10 +585,7 @@ void Search::Worker::undo_move(Position& pos, const Move move) {
 
 
 // Reset histories, usually before a new game
-void Search::Worker::clear() {
-    mainHistory.fill(-5);
-    duckHistory.clear();
-}
+void Search::Worker::clear() { histories.clear(); }
 
 
 // Main search function for both PV and non-PV nodes. The steps are numbered as
@@ -618,8 +614,6 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     bool  improving;
     bool  capture;
 
-    SearchedList quietsSearched;
-    Bitboard     ducksSearched = 0;
 
     // Step 1. Initialize node
     bestValue = -VALUE_INFINITE;
@@ -773,21 +767,21 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     // Whether the king of the side to move is attacked, for the reductions
     bool kingAttacked = king_attacked(pos);
 
-    MovePicker mp(pos, ttData.move, depth, &mainHistory, &duckHistory);
+    Color             us      = pos.side_to_move();
+    Bitboard          threats = pos.threats(~us);
+    ContinuationMoves contMoves{(ss - 1)->pieceTo, (ss - 2)->pieceTo, (ss - 4)->pieceTo};
+    bool pruneNeutrals = !PvNode && depth <= 8 && !is_decisive(alpha) && !is_decisive(beta);
+
+    MovePicker mp(pos, ttData.move, moveStack, histories, contMoves, threats, pos.neutral_ducks(),
+                  pruneNeutrals, pruneNeutrals, -28, false);
 
     value = bestValue;
 
-    int      moveCount     = 0;
-    Move     safeDucksMove = Move::none();
-    Bitboard safeDucks     = 0;
+    int moveCount = 0, searchedMoves = 0, uniqueMoves = 0, uniqueDucks = 0;
 
-    // The chess move being tried, and with how many duck squares it was
-    // searched so far (madeCount also counts the Duck or Die losses)
-    Move chessMove = Move::none();
-    int  duckCount = 0, madeCount = 0;
-
-    // How many moves, and how many different chess moves, were made so far
-    int searchedMoves = 0, uniqueMoves = 0;
+    // How many times each chess move and each duck square was searched
+    u8 moveCounts[SQUARE_NB][SQUARE_NB] = {};
+    u8 duckCounts[SQUARE_NB]            = {};
 
     // For duck refutations: by destination square, the last chess move to it
     // and the duck squares that leave a good reply to it unblocked
@@ -795,6 +789,15 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         Move     chessMove;
         Bitboard ducks;
     } refutations[SQUARE_NB] = {};
+
+    // For Duck or Die: by destination square, the last chess move to it and
+    // the duck squares that keep our king safe after it
+    struct DuckSafety {
+        Move     chessMove;
+        Bitboard safe;
+    } duckSafety[SQUARE_NB] = {};
+
+    SearchedList quietsSearched, capturesSearched;
 
     // Step 13. Loop through all legal moves until no moves remain
     // or a beta cutoff occurs.
@@ -810,76 +813,115 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
 
         ++moveCount;
 
-        // Duck refutations. If the opponent had a good reply to this chess
-        // move with an earlier duck square, that reply is still there unless
-        // this duck square blocks it, so skip the move if it doesn't. Only once
-        // we have a move that doesn't lose, and not at the root, where a
-        // skipped move would keep its score from the previous iteration.
-        if (!rootNode && !is_loss(bestValue)
-            && refutations[move.to_sq()].chessMove == move.chess_move()
-            && (refutations[move.to_sq()].ducks & move.duck_sq()))
-            continue;
-
         if (rootNode && is_mainthread() && nodes > NODES_LIMIT_OUTPUT)
             main_manager()->updates.onIter(
               {depth, UCIEngine::move(move, pos.is_chess960()), moveCount + pvIdx});
         if (PvNode)
             (ss + 1)->pv = nullptr;
 
-        capture = pos.capture_stage(move);
+        Square from = move.from_sq(), to = move.to_sq(), duck = move.duck_sq();
+        int    pc = piece_index(pos.moved_piece(move));
 
-        if (move.chess_move() != chessMove)
-        {
-            chessMove = move.chess_move();
-            duckCount = madeCount = 0;
-        }
+        capture = pos.capture_stage(move);
 
         int   reduction = base_reduction(depth, uniqueMoves);
         Depth lmrDepth  = std::max(0, depth - reduction / 1024);
+        int   duckHist  = histories.duck[us][duck];
 
-        // The history of a quiet move: chess move and duck square, on wakwak's
-        // scale (16384 at most for each)
-        int history = capture ? 0
-                              : (mainHistory[pos.side_to_move()][move.chess_raw()]
-                                 + duckHistory(pos.side_to_move(), move.duck_sq()))
-                                  * 16384 / 7183;
+        // The histories of the move for the reductions and the pruning, with
+        // wakwak's weights
+        int lmrHistory = 0, futilityHistory = 0, pruningHistory = 0, seeHistory = 0;
 
-        // Step 14. Pruning at shallow depth
+        if (!capture)
+        {
+            int q  = histories.quiet[us][from][to][bool(threats & from)][bool(threats & to)];
+            int c1 = contMoves.ply1.ok()
+                     ? histories.cont[0][us][contMoves.ply1.piece][contMoves.ply1.to][pc][to]
+                     : 0;
+            int c2 = contMoves.ply2.ok()
+                     ? histories.cont[1][us][contMoves.ply2.piece][contMoves.ply2.to][pc][to]
+                     : 0;
+
+            lmrHistory      = (q * 1057 + duckHist * 917 + c1 * 1001 + c2 * 1010) / 1024;
+            futilityHistory = (q * 1087 + duckHist * 1125 + c1 * 980 + c2 * 1110) / 1024;
+            pruningHistory  = (q * 1025 + duckHist * 949 + c1 * 980 + c2 * 1080) / 1024;
+        }
+        else
+        {
+            int victim = move.type_of() == EN_PASSANT ? 0 : int(type_of(pos.piece_on(to)));
+            seeHistory = (histories.noisy[us][pc][to][victim] * 976 + duckHist * 975) / 1024;
+        }
+
+        // Step 14. Pruning at shallow depth, as in wakwak. Only once we have a
+        // move that doesn't lose, and not at the root.
         if (!rootNode && !is_loss(bestValue))
         {
-            // Late duck pruning. The duck squares of a chess move come in duck
-            // history order, best first. For a quiet chess move, stop once a
-            // few of them have been searched (Duck or Die losses don't count).
-            if (!PvNode && !capture && depth <= 8 && duckCount >= 2 + 2 * depth)
-            {
-                mp.skip_ducks();
+            // Duck refutations. If the opponent had a good reply to this chess
+            // move with an earlier duck square, that reply is still there unless
+            // this duck square blocks it, so skip the move if it doesn't.
+            if (refutations[to].chessMove == move.chess_move() && (refutations[to].ducks & duck))
                 continue;
-            }
 
             if (!capture)
             {
-                // Futility pruning for quiet moves, wakwak's margin
+                // Futility pruning for quiet moves
                 if (lmrDepth <= 8
                     && ss->staticEval + 99 + 93 * lmrDepth
-                           + std::clamp((history + 3956) / 61, -419, 359)
+                           + std::clamp((futilityHistory + 3956) / 61, -419, 359)
                          <= alpha)
                 {
                     mp.skip_quiets();
                     continue;
                 }
 
-                // Late move pruning by the number of chess moves searched, as
-                // wakwak's unique move pruning
-                if (!madeCount && uniqueMoves > (3994 + 1412 * depth * depth) / 1024)
+                // History pruning
+                if (pruningHistory < -59 - 2508 * depth * depth)
                 {
                     mp.skip_quiets();
                     continue;
                 }
+
+                // Duck count pruning: after a few moves with a duck square, the
+                // others with it are unlikely to be better
+                int dcp = (improving ? 2031 + 1040 * depth : 4132 + 2076 * depth)
+                        + std::clamp((duckHist - 3844) * 1024 / 3973, -2211, 1923);
+                if (!PvNode && duckCounts[duck] >= dcp / 1024)
+                    continue;
             }
+
+            // Move count pruning: the same for the duck squares of a chess move
+            int mcp = capture   ? (improving ? 4111 + 4054 * lmrDepth : 4199 + 3938 * lmrDepth)
+                    : improving ? 2110 + 2050 * lmrDepth
+                                : 1040 + 1125 * lmrDepth;
+            if (!capture)
+                mcp += std::clamp((duckHist - 4003) * 1024 / 4114, -2058, 2043);
+            if (moveCounts[from][to] >= mcp / 1024)
+                continue;
+
+            if (!capture)
+            {
+                // Unique duck pruning: after enough different duck squares, a
+                // new one is unlikely to be better
+                int udp =
+                  10571 + 3980 * depth + std::clamp((duckHist - 4228) * 1024 / 4129, -2062, 2157);
+                if (!duckCounts[duck] && uniqueDucks > udp / 1024)
+                    continue;
+
+                // Unique move pruning: the same for new chess moves
+                if (!moveCounts[from][to] && uniqueMoves > (3994 + 1412 * depth * depth) / 1024)
+                    continue;
+            }
+
+            // SEE pruning of the quiet moves and the captures losing material
+            if (depth <= 10 && mp.stage_of() >= QUIET
+                && !pos.see_ge_duck(
+                  move, capture ? -7 - 73 * depth - std::clamp((seeHistory + 42) / 65, -521, 551)
+                                : 10 - 73 * depth))
+                continue;
         }
 
-        uniqueMoves += !madeCount++;
-        searchedMoves++;
+        uniqueMoves += !moveCounts[from][to]++;
+        uniqueDucks += !duckCounts[duck]++;
 
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
@@ -890,13 +932,10 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // king attacked, the opponent captures it and wins. Score such a move
         // as that loss (mated in 2 plies) without searching it, unless the
         // position after it is already a draw by repetition or the 50-move rule.
-        if (move.chess_move() != safeDucksMove)
-        {
-            safeDucksMove = move.chess_move();
-            safeDucks     = safe_ducks(pos);
-        }
+        if (duckSafety[to].chessMove != move.chess_move())
+            duckSafety[to] = {move.chess_move(), safe_ducks(pos)};
 
-        if (!(safeDucks & move.duck_sq()) && !pos.is_draw(ss->ply + 1))
+        if (!(duckSafety[to].safe & duck) && !pos.is_draw(ss->ply + 1))
         {
             if (PvNode)
             {
@@ -909,8 +948,6 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         }
         else
         {
-            ++duckCount;
-
             Depth newDepth = depth - 1;
 
             if (!PvNode || moveCount > 1)
@@ -919,9 +956,10 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                 // after the first six is searched at a reduced depth first,
                 // then at full depth if it raises alpha.
                 int r = 0;
-                if (depth >= 3 && searchedMoves > 7 && !capture)
+                if (depth >= 3 && searchedMoves > 6 && !capture)
                     r = reduction + 1030 * !PvNode + 1053 * !improving + 1034 * bool(bestMove)
-                      - 1057 * kingAttacked - 67 * history / 1024;
+                      + 1024 * (duckCounts[duck] > 1 + histories.duckCount[us][duck] / 32)
+                      - 1057 * kingAttacked - 67 * lmrHistory / 1024;
 
                 Depth d = std::min(std::max(newDepth - r / 1024, 1), newDepth);
 
@@ -949,6 +987,8 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // Step 21. Undo move
         undo_move(pos, move);
 
+        searchedMoves++;
+
         assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
 
         // Step 22. Check for a new best move
@@ -962,13 +1002,13 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         // remember the duck squares that don't block it
         if (Move reply = (ss + 1)->reply)
         {
-            Refutation& r       = refutations[move.to_sq()];
-            Bitboard    refuted = ~blocking_ducks(reply, ~pos.side_to_move());
+            Refutation& ref     = refutations[to];
+            Bitboard    refuted = ~blocking_ducks(reply, ~us);
 
-            if (r.chessMove == move.chess_move())
-                r.ducks |= refuted;
+            if (ref.chessMove == move.chess_move())
+                ref.ducks |= refuted;
             else
-                r = {move.chess_move(), refuted};
+                ref = {move.chess_move(), refuted};
         }
 
         if (rootNode)
@@ -1047,34 +1087,31 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                     ss->pv->update(move, (ss + 1)->pv);
 
                 if (value >= beta)
-                    break;  // Fail high
+                {
+                    // Update the histories on a fail high, as wakwak does
+                    update_all_stats(pos, *this, ss, bestMove, quietsSearched, capturesSearched,
+                                     duckCounts, threats, depth);
+                    break;
+                }
 
                 alpha = value;  // Update alpha! Always alpha < beta
             }
         }
 
-        // If the move is worse than some previously searched move, remember its
-        // chess move, once, and its duck square, to update their stats later.
-        if (move != bestMove && !capture && quietsSearched.size() < SEARCHEDLIST_CAPACITY
-            && std::find(quietsSearched.begin(), quietsSearched.end(), move.chess_move())
-                 == quietsSearched.end())
-            quietsSearched.push_back(move.chess_move());
-
+        // Remember the moves that are worse than the best one, to update their
+        // stats later
         if (move != bestMove)
-            ducksSearched |= move.duck_sq();
+        {
+            SearchedList& list = capture ? capturesSearched : quietsSearched;
+            if (list.size() < SEARCHEDLIST_CAPACITY)
+                list.push_back(move);
+        }
     }
 
-    // Step 23. Check for a position without moves, otherwise update the quiet history
-
-    // All legal moves have been searched: without a chess move, the side to
-    // move has won.
+    // Step 23. Check for a position without moves: without a chess move, the
+    // side to move has won.
     if (!moveCount)
         bestValue = mate_in(ss->ply);
-
-    // If there is a move that produces search value greater than alpha,
-    // we update the stats of searched moves.
-    else if (bestMove)
-        update_all_stats(pos, *this, bestMove, quietsSearched, ducksSearched, depth);
 
     // Step 24. Write gathered information in transposition table
     if (!(rootNode && pvIdx))
@@ -1112,8 +1149,6 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     Key   posKey;
     Move  move, bestMove;
     Value bestValue, value;
-    bool  capture;
-    int   moveCount;
 
     // Step 1. Initialize node
     if (PvNode)
@@ -1123,7 +1158,6 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     }
 
     bestMove = ss->reply = Move::none();
-    moveCount            = 0;
 
     // Check for the available remaining time. Unlike in chess, one qsearch can
     // take longer than a fast time control: each capture comes with every duck
@@ -1145,48 +1179,31 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     assert(0 <= ss->ply && ss->ply < MAX_PLY);
 
-    // Step 3. Transposition table lookup
+    // Step 3. Transposition table lookup. Only a capture or promotion is used
+    // as the TT move.
     posKey                         = pos.key();
     auto [ttHit, ttData, ttWriter] = tt.probe(posKey);
 
-    ttData.move  = ttHit ? ttData.move : Move::none();
+    ttData.move =
+      ttHit && ttData.move && pos.capture_stage(ttData.move) ? ttData.move : Move::none();
     ttData.value = ttHit ? value_from_tt(ttData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
 
-    // At non-PV nodes we check for an early TT cutoff
-    if (!PvNode && ttData.depth >= DEPTH_QS && is_valid(ttData.value)
+    // A TT cutoff, at every node, as in wakwak
+    if (is_valid(ttData.value)
         && (ttData.bound & (ttData.value >= beta ? BOUND_LOWER : BOUND_UPPER)))
     {
-        if (ttData.move && pos.capture_stage(ttData.move))
-            ss->reply = ttData.move;
-
+        ss->reply = ttData.move;
         return ttData.value;
     }
 
     // Step 4. Static evaluation of the position
-    Value staticEval = VALUE_NONE;
-    if (ttHit)
-    {
-        // Never assume anything about values stored in TT
-        staticEval = ttData.eval;
-
-        if (!is_valid(staticEval))
-            staticEval = evaluate(pos);
-
-        bestValue = staticEval;
-
-        // ttValue can be used as a better position evaluation
-        if (is_valid(ttData.value) && !is_decisive(ttData.value)
-            && (ttData.bound & (ttData.value > bestValue ? BOUND_LOWER : BOUND_UPPER)))
-            bestValue = ttData.value;
-    }
-    else
-        staticEval = bestValue = evaluate(pos);
+    Value staticEval = ttHit && is_valid(ttData.eval) ? ttData.eval : evaluate(pos);
 
     // Stand pat. Return immediately if static value is at least beta
+    bestValue = staticEval;
+
     if (bestValue >= beta)
     {
-        assert(!is_decisive(bestValue));
-
         if (!ttHit)
             ttWriter.write(posKey, VALUE_NONE, false, BOUND_LOWER, DEPTH_UNSEARCHED, Move::none(),
                            staticEval, tt.generation());
@@ -1196,45 +1213,74 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     if (bestValue > alpha)
         alpha = bestValue;
 
-    // Initialize a MovePicker object for the current position, and prepare
-    // to search the moves: the captures, each with every duck square.
-    MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory, &duckHistory);
+    // The captures and promotions with a good SEE, each with every duck
+    // square, but the neutral ones at non-PV nodes
+    Color             us = pos.side_to_move();
+    ContinuationMoves contMoves{(ss - 1)->pieceTo, (ss - 2)->pieceTo, (ss - 4)->pieceTo};
+    bool              pruneNeutrals = !PvNode && !is_decisive(alpha) && !is_decisive(beta);
 
-    Move     safeDucksMove = Move::none();
-    Bitboard safeDucks     = 0;
+    MovePicker mp(pos, ttData.move, moveStack, histories, contMoves, 0, pos.neutral_ducks(), false,
+                  pruneNeutrals, 9, true);
 
-    // For duck refutations: by destination square, the duck squares that leave
-    // a good reply to a capture there unblocked
+    // How many times each chess move and each duck square was searched: at
+    // most twice each, as in wakwak
+    struct MoveCount {
+        Move chessMove;
+        int  count;
+    } moveCounts[32];
+    int moveCountSize         = 0;
+    u8  duckCounts[SQUARE_NB] = {};
+
     Bitboard refutedDucks[SQUARE_NB] = {};
 
-    // Step 5. Loop through all legal moves until no moves remain
-    // or a beta cutoff occurs.
+    struct DuckSafety {
+        Move     chessMove;
+        Bitboard safe;
+    } duckSafety[SQUARE_NB] = {};
+
+    // Step 5. Loop through all moves until no moves remain or a beta cutoff
+    // occurs.
     while ((move = mp.next_move()) != Move::none())
     {
         assert(move.is_ok());
 
-        capture = pos.capture_stage(move);
+        Square to = move.to_sq(), duck = move.duck_sq();
 
-        moveCount++;
-
-        // Step 6. Skip non-captures (a quiet TT move). As in the main search
-        // (duck refutations), also skip a capture whose duck square doesn't
-        // block a good reply found to an earlier capture on the same square.
-        if (!capture || (refutedDucks[move.to_sq()] & move.duck_sq()))
+        // Duck refutations: skip a capture whose duck square doesn't block a
+        // good reply found to an earlier capture on the same square
+        if (refutedDucks[to] & duck)
             continue;
+
+        if (duckCounts[duck] >= 2)
+            continue;
+
+        MoveCount* mc =
+          std::find_if(moveCounts, moveCounts + moveCountSize,
+                       [&](const MoveCount& c) { return c.chessMove == move.chess_move(); });
+
+        if (mc == moveCounts + moveCountSize)
+        {
+            if (moveCountSize == 32)
+                continue;
+            *mc = {move.chess_move(), 0};
+            moveCountSize++;
+        }
+
+        if (mc->count >= 2)
+            continue;
+
+        mc->count++;
+        duckCounts[duck]++;
 
         // Step 7. Make and search the move. As in the main search (Duck or
         // Die), a capture that leaves our king attacked is scored as a loss
         // without searching it.
         do_move(pos, move, st, ss);
 
-        if (move.chess_move() != safeDucksMove)
-        {
-            safeDucksMove = move.chess_move();
-            safeDucks     = safe_ducks(pos);
-        }
+        if (duckSafety[to].chessMove != move.chess_move())
+            duckSafety[to] = {move.chess_move(), safe_ducks(pos)};
 
-        if (!(safeDucks & move.duck_sq()) && !pos.is_draw(ss->ply + 1))
+        if (!(duckSafety[to].safe & duck) && !pos.is_draw(ss->ply + 1))
         {
             if (PvNode)
                 (ss + 1)->pv->clear();
@@ -1256,7 +1302,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
         // Duck refutations
         if (Move reply = (ss + 1)->reply)
-            refutedDucks[move.to_sq()] |= ~blocking_ducks(reply, ~pos.side_to_move());
+            refutedDucks[to] |= ~blocking_ducks(reply, ~us);
 
         // Step 8. Check for a new best move
         if (value > bestValue)
@@ -1281,9 +1327,8 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
 
     // Step 9. Check for a position without moves, which the side to move has
     // won. Only check it under specific conditions.
-    if (!moveCount)
+    if (bestValue == staticEval && !bestMove)
     {
-        Color us = pos.side_to_move();
         if (!(pawn_single_push_bb(us, pos.pieces(us, PAWN)) & ~pos.pieces())
             && !pos.non_pawn_material(us) && !MoveList<ALL>(pos).size())
             bestValue = mate_in(ss->ply);
@@ -1362,38 +1407,114 @@ Value value_from_tt(Value v, int ply, int r50c) {
 }
 
 
-// Updates the histories at the end of search() when a bestMove is found. The
-// duck history: a bonus for the best move's duck square, and a malus of the
-// same size for the other squares the duck went to in the moves searched before
-// it, captures or not. The butterfly history: a bonus for the best chess move if
-// it is quiet, and a malus for the other quiet chess moves searched before it.
+// Updates the histories after a fail high, as in wakwak. A quiet best move
+// gets a bonus in the quiet, pawn, quiet-duck and continuation histories, and
+// the other quiet chess moves searched a malus; a capture gets a bonus in the
+// capture history. The other captures searched always get a malus. The duck
+// square of the best move gets a bonus in the duck history, those of the other
+// moves a malus, and the duck count history learns how many moves with that
+// duck square it took to find the best move.
 void update_all_stats(const Position& pos,
                       Search::Worker& workerThread,
+                      Stack*          ss,
                       Move            bestMove,
                       SearchedList&   quietsSearched,
-                      Bitboard        ducksSearched,
+                      SearchedList&   capturesSearched,
+                      const u8*       duckCounts,
+                      Bitboard        threats,
                       Depth           depth) {
 
-    Color  us       = pos.side_to_move();
-    int    bonus    = std::min(133 * depth - 81, 1487);
-    Square bestDuck = bestMove.duck_sq();
+    Histories& h  = workerThread.histories;
+    Color      us = pos.side_to_move();
 
-    workerThread.duckHistory.update(us, bestDuck, bonus);
+    auto bonus = [depth](int base, int scale, int max) {
+        return std::min(base + scale * depth, max);
+    };
 
-    for (Bitboard b = ducksSearched & ~square_bb(bestDuck); b;)
-        workerThread.duckHistory.update(us, pop_lsb(b), -bonus);
+    const PieceTo prev[3] = {(ss - 1)->pieceTo, (ss - 2)->pieceTo, (ss - 4)->pieceTo};
+
+    auto update_quiet = [&](Move m, bool good) {
+        Square from = m.from_sq(), to = m.to_sq();
+        int    pc = piece_index(pos.moved_piece(m));
+
+        gravity<MaxHistory, MaxHistory>(
+          h.quiet[us][from][to][bool(threats & from)][bool(threats & to)],
+          good ? bonus(128, 126, 2152) : -bonus(132, 130, 2076));
+        gravity<MaxHistory, MaxHistory>(h.pawn[us][pos.pawn_key() % PawnHistorySize][pc][to],
+                                        good ? bonus(125, 128, 2095) : -bonus(127, 135, 2063));
+        gravity<MaxHistory, MaxHistory>(h.quietDuck[us][pc][to][m.duck_sq()],
+                                        good ? bonus(123, 127, 2053) : -bonus(128, 125, 2082));
+
+        // The continuation histories decay by the sum of their entries
+        std::int16_t* entries[3] = {};
+        int           total      = 0;
+        for (int i = 0; i < 3; ++i)
+            if (prev[i].ok())
+            {
+                entries[i] = &h.cont[i != 0][us][prev[i].piece][prev[i].to][pc][to];
+                total += *entries[i];
+            }
+
+        const int amount[3] = {good ? bonus(131, 129, 2013) : -bonus(139, 126, 2024),
+                               good ? bonus(127, 120, 2031) : -bonus(127, 123, 2123),
+                               good ? bonus(128, 127, 2026) : -bonus(124, 131, 2003)};
+
+        for (int i = 0; i < 3; ++i)
+            if (entries[i])
+                gravity<MaxHistory, MaxHistory>(*entries[i], total, amount[i]);
+    };
+
+    auto update_noisy = [&](Move m, bool good) {
+        Square to     = m.to_sq();
+        int    victim = m.type_of() == EN_PASSANT ? 0 : int(type_of(pos.piece_on(to)));
+        gravity<MaxHistory, MaxHistory>(h.noisy[us][piece_index(pos.moved_piece(m))][to][victim],
+                                        good ? bonus(127, 131, 2136) : -bonus(126, 120, 2069));
+    };
+
+    // Each chess move and duck square is updated once
+    Bitboard seen[SQUARE_NB] = {};
+    auto     first_time      = [&](Move m) {
+        bool first = !(seen[m.from_sq()] & m.to_sq());
+        seen[m.from_sq()] |= m.to_sq();
+        return first;
+    };
 
     if (pos.capture_stage(bestMove))
-        return;
+    {
+        first_time(bestMove);
+        update_noisy(bestMove, true);
+    }
+    else
+    {
+        first_time(bestMove);
+        update_quiet(bestMove, true);
 
-    workerThread.mainHistory[us][bestMove.chess_raw()] << bonus;
+        for (Move m : quietsSearched)
+            if (first_time(m))
+                update_quiet(m, false);
+    }
 
-    // Decrease stats for all non-best quiet moves
-    for (Move move : quietsSearched)
-        if (move != bestMove.chess_move())
-            workerThread.mainHistory[us][move.chess_raw()] << -bonus;
+    // The duck count of the best move's duck square, times 32
+    std::int16_t& dc = h.duckCount[us][bestMove.duck_sq()];
+    gravity<MaxHistory / 4, MaxHistory>(dc,
+                                        (duckCounts[bestMove.duck_sq()] * 32 - dc) * depth / 10);
+
+    for (Move m : capturesSearched)
+        if (first_time(m))
+            update_noisy(m, false);
+
+    Bitboard ducks = square_bb(bestMove.duck_sq());
+    gravity<MaxHistory, MaxHistory>(h.duck[us][bestMove.duck_sq()], bonus(129, 128, 2012));
+
+    for (const SearchedList* list : {&quietsSearched, &capturesSearched})
+        for (Move m : *list)
+            if (!(ducks & m.duck_sq()))
+            {
+                ducks |= m.duck_sq();
+                gravity<MaxHistory, MaxHistory>(h.duck[us][m.duck_sq()], -bonus(127, 125, 2143));
+            }
 }
-}
+}  // namespace
 
 // When playing with strength handicap, choose the best move among a set of
 // RootMoves using a statistical rule dependent on 'level'.

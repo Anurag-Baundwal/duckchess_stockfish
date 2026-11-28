@@ -18,241 +18,231 @@
 
 #include "movepick.h"
 
+#include <algorithm>
 #include <cassert>
-#include <limits>
 
 #include "bitboard.h"
-#include "misc.h"
 #include "position.h"
 
 namespace Stockfish {
 
-enum Stages : i8 {
-    TT,
-    INIT_FIRST_STAGE,
-
-    CAPTURE,
-    QUIET,
-
-    QSEARCH,
-};
-
 namespace {
 
-#ifdef USE_AVX512
-// Load the Move, and the ExtMove value, into all lanes of 512-bit registers
-static void splat_extmove(const ExtMove& m, __m512i& move, __m512i& value) {
-    move  = _mm512_set1_epi32(m.raw());
-    value = _mm512_set1_epi32(m.value);
+// Victim values for ordering the captures, wakwak's
+constexpr int MvvValue[PIECE_TYPE_NB] = {0, 94, 328, 333, 501, 906, 20000, 0};
+
+int mvv(const Position& pos, Move m) {
+    int v = m.type_of() == EN_PASSANT ? MvvValue[PAWN] : MvvValue[type_of(pos.piece_on(m.to_sq()))];
+
+    if (m.type_of() == PROMOTION)
+        v += MvvValue[m.promotion_type()] - MvvValue[PAWN];
+
+    return v;
 }
 
-// Sorts up to 16 moves.
-struct MoveSorter {
-    static constexpr int MAX_ELEMENTS = 16;
-    __m512i              sortedValues, sortedMoves;
-
-    explicit MoveSorter(const ExtMove& first) {
-        splat_extmove(first, sortedMoves, sortedValues);
-
-        // Set the uninitialized move values to INT_MIN, so that they sort less than any other move
-        sortedValues = _mm512_mask_set1_epi32(sortedValues, ~1, std::numeric_limits<int>::min());
-    }
-
-    void insert(const ExtMove& m) {
-        __m512i move, value;
-        splat_extmove(m, move, value);
-
-        // Mask of all elements except the insertion point
-        assert(m.value != std::numeric_limits<int>::min());
-        const u16 expand = _kadd_mask16(_mm512_cmplt_epi32_mask(sortedValues, value), -1);
-
-        sortedValues = _mm512_mask_expand_epi32(value, expand, sortedValues);
-        sortedMoves  = _mm512_mask_expand_epi32(move, expand, sortedMoves);
-    }
-
-    void write_sorted(ExtMove* moves, isize count) const {
-        static_assert(sizeof(ExtMove) == 8);
-        assert(count <= MAX_ELEMENTS);
-
-        // Because values and moves are stored separately, we need to reassemble the ExtMoves
-        auto write = [&](int offset, const __m512i indices) {
-            const __m512i extMoves = _mm512_permutex2var_epi32(sortedMoves, indices, sortedValues);
-            const isize   storeCount = count - offset;
-
-            if (storeCount > 0)
-                _mm512_mask_storeu_epi64(moves + offset, (1 << storeCount) - 1, extMoves);
-        };
-
-        write(0, _mm512_setr_epi32(0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23));
-        write(8, _mm512_setr_epi32(8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31));
-    }
-};
-#endif
-
-
-// Sort moves in descending order up to and including a given limit.
-// The order of moves smaller than the limit is left unspecified.
-void partial_insertion_sort(ExtMove* begin, ExtMove* end, int limit) {
-    ExtMove *sortedEnd = begin, *p = begin + 1;
-
-#ifdef USE_AVX512
-    if (begin == end)
-        return;
-
-    MoveSorter sorter(*begin);
-    for (; p < end; ++p)
-    {
-        if (p->value >= limit)
-        {
-            if (sortedEnd - begin + 1 >= MoveSorter::MAX_ELEMENTS)  // sorter full
-                break;
-
-            sorter.insert(*p);
-            *p = *++sortedEnd;
-        }
-    }
-    sorter.write_sorted(begin, sortedEnd - begin + 1);
-    // Use scalar implementation for any remaining elements
-#endif
-
-    for (; p < end; ++p)
-        if (p->value >= limit)
-        {
-            ExtMove tmp = *p, *q;
-            *p          = *++sortedEnd;
-            for (q = sortedEnd; q != begin && *(q - 1) < tmp; --q)
-                *q = *(q - 1);
-            *q = tmp;
-        }
-}
+bool greater(const ExtMove& a, const ExtMove& b) { return a.value > b.value; }
 
 }  // namespace
 
+int quiet_piece_history(
+  const Histories& h, const Position& pos, const ContinuationMoves& cm, Bitboard threats, Move m) {
 
-// MovePicker constructor for the main search and for the quiescence search. As
-// arguments, we pass information to decide which class of moves to emit and to
-// help sorting the (presumably) good moves first.
-MovePicker::MovePicker(
-  const Position& p, Move ttm, Depth depth, const ButterflyHistory* mh, const DuckHistory* dh) :
-    pos(p),
-    mainHistory(mh),
-    duckHistory(dh),
-    ttMove(ttm && p.legal(ttm) ? ttm : Move::none()) {
+    Color  us   = pos.side_to_move();
+    Square from = m.from_sq(), to = m.to_sq();
+    int    pc = piece_index(pos.piece_on(from));
 
-    first_stage = depth > 0 ? CAPTURE : QSEARCH;
-    stage       = ttMove ? TT : INIT_FIRST_STAGE;
+    int v = h.quiet[us][from][to][bool(threats & from)][bool(threats & to)] * 986
+          + h.pawn[us][pos.pawn_key() % PawnHistorySize][pc][to] * 1024;
+
+    if (cm.ply1.ok())
+        v += h.cont[0][us][cm.ply1.piece][cm.ply1.to][pc][to] * 1012;
+    if (cm.ply2.ok())
+        v += h.cont[1][us][cm.ply2.piece][cm.ply2.to][pc][to] * 1055;
+    if (cm.ply4.ok())
+        v += h.cont[1][us][cm.ply4.piece][cm.ply4.to][pc][to] * 1035;
+
+    return v;
 }
 
-// Assigns a numerical value to each move in a list, used for sorting.
-// Captures are ordered by Most Valuable Victim, then Least Valuable Attacker
-// (MVV-LVA). Quiet moves are ordered by the butterfly history.
+
+MovePicker::MovePicker(const Position&          p,
+                       Move                     ttm,
+                       MoveStack&               ms,
+                       const Histories&         h,
+                       const ContinuationMoves& cm,
+                       Bitboard                 th,
+                       Bitboard                 neutral,
+                       bool                     pruneQuiet,
+                       bool                     pruneNoisy,
+                       int                      see,
+                       bool                     qsearch) :
+    pos(p),
+    stack(ms),
+    histories(h),
+    contMoves(cm),
+    ttMove(ttm && p.legal(ttm) ? ttm : Move::none()),
+    threats(th),
+    neutralDucks(neutral),
+    pruneQuietNeutrals(pruneQuiet),
+    pruneNoisyNeutrals(pruneNoisy),
+    seeThreshold(see),
+    skipQuiets(qsearch),
+    skipBadNoisy(qsearch),
+    stage(TT),
+    moves(ms.moves.get() + ms.top),
+    start(ms.top) {}
+
+// Generates the chess moves of a kind, each with every duck square, and
+// scores them. A capture or promotion is scored by its victim and capture
+// history, a quiet move by its histories, and the duck square by its own.
 template<GenType Type>
-ExtMove* MovePicker::generate_and_score() {
+void MovePicker::generate(ExtMove*) {
 
-    static_assert(Type == CAPTURES || Type == QUIETS, "Wrong type");
+    Color us    = pos.side_to_move();
+    bool  prune = Type == CAPTURES ? pruneNoisyNeutrals : pruneQuietNeutrals;
 
-    Color us = pos.side_to_move();
-
-    MoveList<Type> ml(pos);  // move generation
-
-    ExtMove* it = cur;
-    for (auto move : ml)
+    for (Move m : MoveList<Type>(pos))
     {
-        ExtMove& m = *it++;
-        m          = move;
+        // Leave room for the moves of the nodes below
+        if (start + size + SQUARE_NB >= MoveStack::Size - (1 << 15))
+            break;
+
+        Bitboard ducks = pos.duck_targets(m);
+
+        // Of the ducks that restrict no opponent's move, keep the best one
+        if (prune && (ducks & neutralDucks))
+        {
+            Bitboard n    = ducks & neutralDucks;
+            Square   best = lsb(n);
+
+            for (Bitboard b = n; b;)
+            {
+                Square s = pop_lsb(b);
+                if (histories.duck[us][s] >= histories.duck[us][best])
+                    best = s;
+            }
+
+            ducks &= ~neutralDucks | square_bb(best);
+        }
+
+        Square to = m.to_sq();
+        int    pc = piece_index(pos.piece_on(m.from_sq()));
+        int    pieceScore;
 
         if constexpr (Type == CAPTURES)
-            m.value = PieceValue[pos.piece_on(m.to_sq())] - type_of(pos.moved_piece(m));
+        {
+            int victim = m.type_of() == EN_PASSANT ? 0 : int(type_of(pos.piece_on(to)));
+            pieceScore = mvv(pos, m) * 8 + histories.noisy[us][pc][to][victim] * 144 / 1024;
+        }
+        else
+            pieceScore = quiet_piece_history(histories, pos, contMoves, threats, m);
 
-        else  // Type == QUIETS
-            m.value = (*mainHistory)[us][m.chess_raw()];
+        while (ducks)
+        {
+            Square s  = pop_lsb(ducks);
+            Move   dm = m.with_duck(s);
+
+            if (dm == ttMove)
+                continue;
+
+            ExtMove& e = moves[size++];
+            e          = dm;
+
+            if constexpr (Type == CAPTURES)
+                e.value = pieceScore + histories.duck[us][s] * 146 / 1024;
+            else
+                e.value = (pieceScore + histories.duck[us][s] * 982
+                           + histories.quietDuck[us][pc][to][s] * 946)
+                          / 1024
+                        - 5079 * bool(neutralDucks & s);
+        }
     }
-    return it;
+
+    stack.top = start + size;
 }
 
-// Returns the next chess move of the current stage
-Move MovePicker::select() { return cur < endCur ? *cur++ : Move::none(); }
+// Sorts the next batch of moves, at least 64 of them, and as many as were
+// already picked since the sorting started
+void MovePicker::sort_next(int end) {
 
-// This is the most important method of the MovePicker class. We emit one
-// new legal move on every call until there are no more moves left: the TT
-// move first, then each chess move with every duck square in turn.
+    if (cursor != sortedEnd)
+        return;
+
+    int      batch = std::min(std::max(64, cursor - sortStart), end - cursor);
+    ExtMove* first = moves + cursor;
+
+    if (batch < end - cursor)
+        std::nth_element(first, first + batch, moves + end, greater);
+
+    std::sort(first, first + batch, greater);
+    sortedEnd = cursor + batch;
+}
+
+// Returns a new move every time it is called, until there are no more moves
+// left, when Move::none() is returned
 Move MovePicker::next_move() {
 
-    if (stage == TT)
-    {
-        stage = INIT_FIRST_STAGE;
-        return ttMove;
-    }
-
-    while (true)
-    {
-        // The duck squares of the current chess move, best duck history first.
-        // This never returns the TT move, as it was emitted before.
-        while (duckIdx < SQUARE_NB)
-            if (Square s = duckOrder[duckIdx++]; duckTargets & s)
-                if (Move m = chessMove.with_duck(s); m != ttMove)
-                    return m;
-
-        if (!(chessMove = next_chess_move()))
-            return Move::none();
-
-        // A copy of the order, which the search of this move's children updates
-        duckOrder   = duckHistory->sorted(pos.side_to_move());
-        duckTargets = pos.duck_targets(chessMove);
-        duckIdx     = 0;
-    }
-}
-
-// Returns the next chess move, picking the move with the highest score from a
-// list of generated moves
-Move MovePicker::next_chess_move() {
-
-dispatch:
     switch (stage)
     {
+    case TT :
+        stage = GENERATE_NOISY;
+        if (ttMove)
+            return ttMove;
+        [[fallthrough]];
 
-    case INIT_FIRST_STAGE :
-        cur    = moves;
-        endCur = generate_and_score<CAPTURES>();
+    case GENERATE_NOISY :
+        generate<CAPTURES>(moves);
+        stage  = GOOD_NOISY;
+        cursor = sortStart = sortedEnd = 0;
+        [[fallthrough]];
 
-        partial_insertion_sort(cur, endCur, std::numeric_limits<int>::min());
+    case GOOD_NOISY :
+        while (cursor < size)
+        {
+            sort_next(size);
+            Move m = moves[cursor++];
 
-        stage = first_stage;
-        goto dispatch;
+            if (pos.see_ge_duck(m, seeThreshold))
+                return m;
 
-    case CAPTURE :
-        if (Move m = select())
-            return m;
+            // Keep the bad ones at the front, for later
+            std::swap(moves[badCount++], moves[cursor - 1]);
+        }
+        stage = GENERATE_QUIET;
+        [[fallthrough]];
 
-        // Initialize the quiet moves, after the captures
-        endCur = generate_and_score<QUIETS>();
-
-        partial_insertion_sort(cur, endCur, std::numeric_limits<int>::min());
-
+    case GENERATE_QUIET :
+        if (!skipQuiets)
+        {
+            cursor = sortStart = sortedEnd = size;
+            generate<QUIETS>(moves);
+        }
         stage = QUIET;
         [[fallthrough]];
 
     case QUIET :
-        return skipQuiets ? Move::none() : select();
+        if (!skipQuiets && cursor < size)
+        {
+            sort_next(size);
+            return moves[cursor++];
+        }
+        stage  = BAD_NOISY;
+        cursor = 0;
+        [[fallthrough]];
 
-    case QSEARCH :
-        return select();
+    case BAD_NOISY :
+        if (!skipBadNoisy && cursor < badCount)
+            return moves[cursor++];
 
-    default :
-        assert(false);
-        sf_unreachable();
+        stage = FINISHED;
+        [[fallthrough]];
+
+    case FINISHED :
+        return Move::none();
     }
-}
 
-// Skips the remaining duck squares of the current chess move
-void MovePicker::skip_ducks() { duckIdx = SQUARE_NB; }
-
-// Skips the quiet chess moves still to come, and the remaining duck squares of
-// the current chess move if it is quiet
-void MovePicker::skip_quiets() {
-    skipQuiets = true;
-    if (stage == QUIET)
-        skip_ducks();
+    assert(false);
+    return Move::none();
 }
 
 }  // namespace Stockfish

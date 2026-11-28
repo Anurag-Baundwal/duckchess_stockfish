@@ -138,6 +138,11 @@ class Position {
 
     // Static Exchange Evaluation
     bool see_ge(Move m, int threshold = 0) const;
+    bool see_ge_duck(Move m, int threshold) const;
+
+    // Duck chess helpers for the search, as in wakwak
+    Bitboard neutral_ducks() const;
+    Bitboard threats(Color c) const;
 
     // Accessing hash keys
     Key key() const;

@@ -1017,6 +1017,149 @@ void Position::undo_null_move() {
 }
 
 
+// The squares where the duck restricts none of the opponent's next moves:
+// not a square a piece of the opponent could move to (its own pieces block,
+// ours don't), nor its first rank while it may castle.
+Bitboard Position::neutral_ducks() const {
+
+    Color     them     = ~sideToMove;
+    Bitboard  blockers = pieces(them);
+    Bitboard  pawns    = pieces(them, PAWN);
+    Direction up       = pawn_push(them);
+
+    Bitboard relevant =
+      shift(pawns, up) | shift(shift(pawns & rank_bb(relative_rank(them, RANK_2)), up), up)
+      | (them == WHITE ? pawn_attacks_bb<WHITE>(pawns) : pawn_attacks_bb<BLACK>(pawns))
+      | attacks_bb(KING, square<KING>(them));
+
+    for (Bitboard b = pieces(them, KNIGHT); b;)
+        relevant |= attacks_bb(KNIGHT, pop_lsb(b));
+    for (Bitboard b = pieces(them, BISHOP, QUEEN); b;)
+        relevant |= attacks_bb(BISHOP, pop_lsb(b), blockers);
+    for (Bitboard b = pieces(them, ROOK, QUEEN); b;)
+        relevant |= attacks_bb(ROOK, pop_lsb(b), blockers);
+
+    if (can_castle(them == WHITE ? WHITE_CASTLING : BLACK_CASTLING))
+        relevant |= rank_bb(relative_rank(them, RANK_1));
+
+    return ~relevant;
+}
+
+// The squares that the pieces of color c attack
+Bitboard Position::threats(Color c) const {
+
+    Bitboard occupied = pieces();
+    Bitboard threats  = c == WHITE ? pawn_attacks_bb<WHITE>(pieces(c, PAWN))
+                                   : pawn_attacks_bb<BLACK>(pieces(c, PAWN));
+
+    for (Bitboard b = pieces(c, KNIGHT); b;)
+        threats |= attacks_bb(KNIGHT, pop_lsb(b));
+    for (Bitboard b = pieces(c, BISHOP, QUEEN); b;)
+        threats |= attacks_bb(BISHOP, pop_lsb(b), occupied);
+    for (Bitboard b = pieces(c, ROOK, QUEEN); b;)
+        threats |= attacks_bb(ROOK, pop_lsb(b), occupied);
+    if (pieces(c, KING))
+        threats |= attacks_bb(KING, square<KING>(c));
+
+    return threats;
+}
+
+// Static exchange evaluation with the duck, as in wakwak: whether move m wins
+// at least threshold. The duck of the move can block a slider's recapture,
+// and each side, when it captures, puts the duck between the square and the
+// next slider of the other side, if it can.
+bool Position::see_ge_duck(Move m, int threshold) const {
+
+    constexpr int SeeValue[PIECE_TYPE_NB] = {0, 102, 331, 331, 501, 908, 20000, 0};
+
+    if (m.type_of() == CASTLING)
+        return threshold <= 0;
+
+    Square    from = m.from_sq(), to = m.to_sq();
+    PieceType nextVictim = m.type_of() == PROMOTION ? m.promotion_type() : type_of(piece_on(from));
+
+    int value = m.type_of() == EN_PASSANT ? SeeValue[PAWN] : SeeValue[type_of(piece_on(to))];
+    if (m.type_of() == PROMOTION)
+        value += SeeValue[m.promotion_type()] - SeeValue[PAWN];
+
+    int balance = value - threshold;
+    if (balance < 0)
+        return false;
+
+    balance -= SeeValue[nextVictim];
+    if (balance >= 0)
+        return true;
+
+    Bitboard occupied = (pieces(WHITE) | pieces(BLACK)) ^ from | to;
+    if (m.type_of() == EN_PASSANT)
+        occupied ^= make_square(file_of(to), rank_of(from));
+
+    Bitboard diag      = pieces(BISHOP, QUEEN);
+    Bitboard orth      = pieces(ROOK, QUEEN);
+    Bitboard attackers = attackers_to(to, occupied);
+    Bitboard duck      = square_bb(m.duck_sq());
+    Color    stm       = ~sideToMove;
+
+    // The pieces of a color that attack the square, sliders blocked by the duck
+    auto attackers_of = [&](Color c) {
+        Bitboard unblocked = (attacks_bb(BISHOP, to, occupied | duck) & diag)
+                           | (attacks_bb(ROOK, to, occupied | duck) & orth);
+        return attackers & (~(diag | orth) | unblocked) & pieces(c);
+    };
+
+    auto least_valuable = [&](Bitboard b) {
+        for (PieceType pt : {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING})
+            if (b & pieces(pt))
+                return pt;
+        return NO_PIECE_TYPE;
+    };
+
+    while (true)
+    {
+        Bitboard ours = attackers_of(stm);
+        if (!ours)
+            break;
+
+        PieceType attacker = least_valuable(ours);
+        occupied ^= lsb(pieces(attacker) & ours);
+
+        // Add the x-ray attackers behind it
+        if (attacker == PAWN || attacker == BISHOP || attacker == QUEEN)
+            attackers |= attacks_bb(BISHOP, to, occupied) & diag;
+        if (attacker == ROOK || attacker == QUEEN)
+            attackers |= attacks_bb(ROOK, to, occupied) & orth;
+        attackers &= occupied;
+
+        // Our duck goes between the square and the next attacker of the
+        // opponent if that is a slider. It can't stay where it is.
+        Bitboard  theirs   = attackers & pieces(~stm);
+        PieceType next     = least_valuable(theirs);
+        Bitboard  prevDuck = duck;
+        duck               = 0;
+
+        if (next == BISHOP || next == ROOK || next == QUEEN)
+        {
+            Square   s      = lsb(theirs & pieces(next));
+            Bitboard blocks = Attacks::between_bb(to, s) & ~occupied & ~prevDuck & ~square_bb(s);
+            if (blocks)
+                duck = square_bb(lsb(blocks));
+        }
+
+        stm     = ~stm;
+        balance = -balance - 1 - SeeValue[attacker];
+
+        if (balance >= 0)
+        {
+            // A king that captures must not be captured in turn
+            if (attacker == KING && attackers_of(stm))
+                stm = ~sideToMove;
+            break;
+        }
+    }
+
+    return sideToMove != stm;
+}
+
 // Tests if the SEE (Static Exchange Evaluation)
 // value of the move is greater or equal to the given threshold. We'll use an
 // algorithm similar to alpha-beta pruning with a null window.
