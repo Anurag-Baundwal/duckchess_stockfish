@@ -857,6 +857,20 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         }
     }
 
+    // Step 10. Internal iterative deepening, as in wakwak: a PV node without a
+    // TT move first searches at a reduced depth to find one.
+    if (!rootNode && PvNode && depth >= 5 && !excludedMove && !ttData.move)
+    {
+        search<PV>(pos, ss, alpha, beta, (733 * depth - 1539) / 1024);
+
+        if (threads.stop.load(std::memory_order_relaxed))
+            return VALUE_ZERO;
+
+        [[maybe_unused]] auto [iidHit, iidData, iidWriter] = tt.probe(posKey);
+        if (iidHit)
+            ttData.move = iidData.move;
+    }
+
     // Whether the king of the side to move is attacked, for the reductions
     bool kingAttacked = king_attacked(pos);
 
