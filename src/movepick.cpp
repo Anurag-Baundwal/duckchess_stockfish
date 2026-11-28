@@ -40,7 +40,11 @@ int mvv(const Position& pos, Move m) {
     return v;
 }
 
-bool greater(const ExtMove& a, const ExtMove& b) { return a.value > b.value; }
+// Moves with equal scores are ordered by the move itself, so that the order
+// is the same with every standard library (std::sort is not stable)
+bool greater(const ExtMove& a, const ExtMove& b) {
+    return a.value > b.value || (a.value == b.value && a.raw() > b.raw());
+}
 
 }  // namespace
 
