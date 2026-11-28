@@ -715,6 +715,9 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     ttData.move  = rootNode ? rootMoves[pvIdx].pv[0] : ttHit ? ttData.move : Move::none();
     ttData.value = ttHit ? value_from_tt(ttData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
 
+    Move excludedMove = ss->excludedMove;
+    Move ttEntryMove  = ttData.move;  // Before duckless hashing may give another
+
     // Step 5. Static evaluation of the position, corrected by the correction
     // histories. The TT keeps the evaluation before the correction.
     Value rawEval;
@@ -755,7 +758,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     //         always check the validity of the TT value because of access races.
     //         As a partial workaround for the graph history interaction problem,
     //         high rule50 counts don't produce transposition table cutoffs.
-    if (!PvNode && is_valid(ttData.value) && ttData.depth >= depth
+    if (!PvNode && !excludedMove && is_valid(ttData.value) && ttData.depth >= depth
         && (ttData.bound & (ttData.value >= beta ? BOUND_LOWER : BOUND_UPPER))
         && pos.rule50_count() < 96)
     {
@@ -767,7 +770,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     // often has the same best move. A second TT entry, keyed without the duck,
     // holds the best move of a fail high or PV node and its lower bound. Use
     // the move if it is legal here, and the bound for a cutoff at non-PV nodes.
-    if (!rootNode && (!PvNode || !ttData.move) && pos.duck_square() != SQ_NONE)
+    if (!rootNode && !excludedMove && (!PvNode || !ttData.move) && pos.duck_square() != SQ_NONE)
     {
         auto [dHit, dData, dWriter] = tt.probe(pos.duckless_key());
         Value dValue = dHit ? value_from_tt(dData.value, ss->ply, pos.rule50_count()) : VALUE_NONE;
@@ -789,7 +792,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         }
     }
 
-    if (!PvNode)
+    if (!PvNode && !excludedMove)
     {
         // Hindsight extension, as in wakwak: if the parent reduced this node a
         // lot but the static evaluation got better for us since then, extend.
@@ -901,6 +904,9 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         if (rootNode && !std::count(rootMoves.begin() + pvIdx, rootMoves.begin() + pvLast, move))
             continue;
 
+        if (move == excludedMove)
+            continue;
+
         ++moveCount;
 
         if (rootNode && is_mainthread() && nodes > NODES_LIMIT_OUTPUT)
@@ -1010,6 +1016,33 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
                 continue;
         }
 
+        // Step 15. Singular extension search, as in wakwak. If all moves but
+        // the TT move fail low against a margin below the TT value, in a search
+        // at about half depth, the TT move is extended, by two plies at non-PV
+        // nodes when they fail low by a lot. If the TT value is already above
+        // beta without it, the TT move is reduced instead.
+        int extension = 0;
+
+        if (!rootNode && depth >= 6 && !excludedMove && move == ttEntryMove && ttHit
+            && ttData.depth + 3 >= depth && (ttData.bound & BOUND_LOWER) && is_valid(ttData.value)
+            && !is_decisive(ttData.value))
+        {
+            Value singularBeta  = ttData.value - depth * 126 / 64;
+            Depth singularDepth = depth * 528 / 1024;
+
+            ss->excludedMove = move;
+            value = search<NonPV>(pos, ss, singularBeta - 1, singularBeta, singularDepth);
+            ss->excludedMove = Move::none();
+
+            if (threads.stop.load(std::memory_order_relaxed))
+                return VALUE_ZERO;
+
+            if (value < singularBeta)
+                extension = !PvNode && value + 61 < singularBeta ? 2 : 1;
+            else if (ttData.value >= beta)
+                extension = -1;
+        }
+
         uniqueMoves += !moveCounts[from][to]++;
         uniqueDucks += !duckCounts[duck]++;
 
@@ -1038,7 +1071,7 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
         }
         else
         {
-            Depth newDepth = depth - 1;
+            Depth newDepth = std::min(depth - 1 + extension, MAX_PLY - 2);
 
             if (!PvNode || moveCount > 1)
             {
@@ -1202,7 +1235,11 @@ Value Search::Worker::search(Position& pos, Stack* ss, Value alpha, Value beta, 
     // Step 23. Check for a position without moves: without a chess move, the
     // side to move has won.
     if (!moveCount)
-        bestValue = mate_in(ss->ply);
+        bestValue = excludedMove ? alpha : mate_in(ss->ply);
+
+    // A singular extension search leaves the TT and the histories alone
+    if (excludedMove)
+        return bestValue;
 
     // Step 24. Write gathered information in transposition table, and for
     // duckless hashing the best move of a fail high or PV node

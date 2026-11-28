@@ -112,10 +112,11 @@ struct Stack {
     int      ply;
     Move     currentMove;
     Value    staticEval;
-    int      reduction;  // Late move reduction of the move being searched, in 1/1024 ply
-    PieceTo  pieceTo;    // The moved piece and its destination, for continuation histories
-    Move     reply;      // A good move here (it raised alpha, or the TT move of a
-                         // TT cutoff): the reply to the move at the ply above
+    int      reduction;     // Late move reduction of the move being searched, in 1/1024 ply
+    PieceTo  pieceTo;       // The moved piece and its destination, for continuation histories
+    Move     excludedMove;  // The TT move, left out by a singular extension search
+    Move     reply;         // A good move here (it raised alpha, or the TT move of a
+                            // TT cutoff): the reply to the move at the ply above
 };
 
 
