@@ -32,6 +32,7 @@
 
 #include "history.h"
 #include "misc.h"
+#include "nnue.h"
 #include "position.h"
 #include "score.h"
 #include "timeman.h"
@@ -299,6 +300,8 @@ class Worker {
     // Public because they need to be updatable by the stats
     ButterflyHistory mainHistory;
     DuckHistory      duckHistory;
+
+    NNUE::AccumulatorStack accumulators;
 
    private:
     bool iterative_deepening();

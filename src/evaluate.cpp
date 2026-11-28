@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <sstream>
 
+#include "nnue.h"
 #include "position.h"
 #include "types.h"
 #include "uci.h"
@@ -514,6 +515,8 @@ std::string Eval::trace(Position& pos) {
     ss << "Final evaluation         " << v << " (white side, internal units)\n";
     ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2);
     ss << "Final evaluation       " << 0.01 * UCIEngine::to_cp(v, pos) << " (white side)\n";
+    ss << std::noshowpoint << std::noshowpos;
+    ss << "NNUE evaluation          " << NNUE::evaluate(pos) << " (side to move, wakwak's units)\n";
 
     return ss.str();
 }

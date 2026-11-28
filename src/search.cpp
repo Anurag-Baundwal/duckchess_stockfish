@@ -243,6 +243,8 @@ bool Search::Worker::iterative_deepening() {
     for (int i = 0; i <= MAX_PLY + 2; ++i)
         (ss + i)->ply = i;
 
+    accumulators.reset();
+
     ss->pv = &pv;
 
     if (mainThread)
@@ -516,12 +518,16 @@ void Search::Worker::do_move(Position& pos, const Move move, StateInfo& st, Stac
 
     ++nodes;
 
+    accumulators.push(pos, move);
     pos.do_move(move, st);
 
     ss->currentMove = move;
 }
 
-void Search::Worker::undo_move(Position& pos, const Move move) { pos.undo_move(move); }
+void Search::Worker::undo_move(Position& pos, const Move move) {
+    pos.undo_move(move);
+    accumulators.pop();
+}
 
 
 // Reset histories, usually before a new game
@@ -1132,7 +1138,7 @@ TimePoint Search::Worker::elapsed() const {
 
 // Evaluate the current position of the game tree, from the point of view of
 // the side to move.
-Value Search::Worker::evaluate(const Position& pos) { return Eval::evaluate(pos); }
+Value Search::Worker::evaluate(const Position& pos) { return accumulators.evaluate(pos); }
 
 namespace {
 

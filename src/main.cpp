@@ -22,6 +22,7 @@
 
 #include "attacks.h"
 #include "misc.h"
+#include "nnue.h"
 #include "position.h"
 #include "psqt.h"
 #include "tune.h"
@@ -35,6 +36,7 @@ int main(int argc, char* argv[]) {
     Attacks::init();
     Position::init();
     PSQT::init();
+    NNUE::init();
 
     auto cli = CommandLine(argc, argv);
     auto uci = std::make_unique<UCIEngine>(std::move(cli));

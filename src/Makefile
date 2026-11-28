@@ -79,11 +79,11 @@ PGOBENCH = $(RUN_PREFIX) ./$(EXE) bench
 SRCS = attacks.cpp benchmark.cpp bitboard.cpp evaluate.cpp main.cpp \
 	misc.cpp movegen.cpp movepick.cpp position.cpp psqt.cpp \
 	search.cpp thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp \
-	engine.cpp score.cpp memory.cpp
+	engine.cpp score.cpp memory.cpp nnue.cpp
 
 HEADERS = attacks.h benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.h \
 		position.h psqt.h search.h thread.h thread_native.h timeman.h \
-		tt.h tune.h types.h uci.h ucioption.h perft.h engine.h score.h memory.h
+		tt.h tune.h types.h uci.h ucioption.h perft.h engine.h score.h memory.h nnue.h
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
@@ -1050,7 +1050,7 @@ endif
 
 
 .PHONY: help analyze build profile-build strip install clean \
-	objclean profileclean config-sanity \
+	objclean profileclean config-sanity net \
 	icx-profile-use icx-profile-make \
 	gcc-profile-use gcc-profile-make \
 	clang-profile-use clang-profile-make FORCE \
@@ -1059,10 +1059,10 @@ endif
 analyze: config-sanity objclean
 	$(MAKE) -k ARCH=$(ARCH) COMP=$(COMP) $(OBJS)
 
-build: config-sanity
+build: net config-sanity
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
 
-profile-build: config-sanity objclean profileclean
+profile-build: net config-sanity objclean profileclean
 	@echo ""
 	@echo "Step 1/4. Building instrumented executable ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_make)
@@ -1103,6 +1103,9 @@ profileclean:
 	@rm -f stockfish.*lt*
 	@rm -f stockfish.res
 	@rm -f ./-lstdc++.res
+
+net:
+	@$(SHELL) ../scripts/net.sh
 
 format:
 	$(CLANG-FORMAT) -i $(SRCS) $(HEADERS) -style=file
